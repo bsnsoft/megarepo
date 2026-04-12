@@ -18,7 +18,7 @@ jobs:
           java-version: 21
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm install -g pnpm
       - name: Build
         working-directory: app
@@ -39,7 +39,7 @@ jobs:
           java-version: 21
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm install -g pnpm
       - name: Unit tests
         working-directory: app
