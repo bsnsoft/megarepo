@@ -33,6 +33,12 @@ subprojects {
             imports {
                 mavenBom(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
             }
+            dependencies {
+                // Override Tomcat to fix CVE-2026-34483, CVE-2026-34486, CVE-2026-34487, CVE-2026-34500
+                dependency("org.apache.tomcat.embed:tomcat-embed-core:10.1.54")
+                dependency("org.apache.tomcat.embed:tomcat-embed-el:10.1.54")
+                dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.54")
+            }
         }
 
         configure<JavaPluginExtension> {
