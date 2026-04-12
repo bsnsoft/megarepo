@@ -38,6 +38,8 @@ subprojects {
                 dependency("org.apache.tomcat.embed:tomcat-embed-core:10.1.54")
                 dependency("org.apache.tomcat.embed:tomcat-embed-el:10.1.54")
                 dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.54")
+                // Fix CVE-2025-48924 (uncontrolled recursion in ClassUtils)
+                dependency("org.apache.commons:commons-lang3:3.18.0")
             }
         }
 
