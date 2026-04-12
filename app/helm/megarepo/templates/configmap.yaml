@@ -1,0 +1,11 @@
+{{- if .Values.springConfig -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "megarepo.fullname" . }}-config
+  labels:
+    {{- include "megarepo.labels" . | nindent 4 }}
+data:
+  application-k8s.yml: |
+    {{- toYaml .Values.springConfig | nindent 4 }}
+{{- end }}

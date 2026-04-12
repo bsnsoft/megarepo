@@ -1,0 +1,99 @@
+spring:
+  application:
+    name: megarepo
+  config:
+    import: optional:classpath:megarepo-version.properties
+  datasource:
+    url: jdbc:postgresql://localhost:5432/megarepo?stringtype=unspecified
+    username: megarepo
+    password: megarepo
+    # HikariCP connection pool tuning (issue #89)
+    # maximum-pool-size: max concurrent connections (default 10, tuned to 20 for moderate load)
+    # minimum-idle: connections kept alive when idle (saves reconnect cost)
+    # idle-timeout: 5 min — idle connections beyond minimum-idle are closed after this
+    # max-lifetime: 10 min — connections recycled to avoid stale/leaked connections
+    # connection-timeout: 10s — fail fast if pool is exhausted
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      max-lifetime: 600000
+      connection-timeout: 10000
+      pool-name: MegaRepoPool
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    placeholder-replacement: false
+  servlet:
+    multipart:
+      max-file-size: 1GB
+      max-request-size: 1GB
+
+server:
+  port: 8080
+  shutdown: graceful
+  compression:
+    enabled: true
+  forward-headers-strategy: native
+  ssl:
+    enabled: false
+    # To enable TLS, set enabled: true and provide a PKCS12 keystore:
+    #   key-store: file:/path/to/keystore.p12
+    #   key-store-password: changeit
+    #   key-store-type: PKCS12
+    # See docs/tls-setup.md for details.
+
+springdoc:
+  api-docs:
+    path: /api/v1/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  show-actuator: false
+
+# Actuator endpoints for monitoring (issues #62, #89)
+# /actuator/health and /actuator/info are public (see SecurityConfig)
+# /actuator/metrics and /actuator/prometheus require authentication
+# Prometheus endpoint exposes all metrics in OpenMetrics format for scraping
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+  metrics:
+    tags:
+      application: megarepo
+
+megarepo:
+  data-directory: ./data
+  blob-stores:
+    default-path: ./data/blobs/default
+  security:
+    jwt:
+      secret: ${MEGAREPO_JWT_SECRET:change-me-in-production}
+      access-token-expiry: 30m
+      refresh-token-expiry: 7d
+    default-admin-password: admin123
+  proxy:
+    user-agent: MegaRepo/1.0
+    connect-timeout: 10s
+    read-timeout: 30s
+    retry-on-timeout: 1
+  docker:
+    default-repository: docker-hosted
+  license:
+    path: ${MEGAREPO_LICENSE_PATH:./megarepo.license}

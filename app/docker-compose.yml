@@ -1,0 +1,39 @@
+services:
+  megarepo:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/megarepo?stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: megarepo
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-megarepo}
+      MEGAREPO_SECURITY_JWT_SECRET: ${MEGAREPO_JWT_SECRET:-change-me-in-production}
+      MEGAREPO_DATA_DIRECTORY: /opt/megarepo/data
+      MEGAREPO_BLOB_STORES_DEFAULT_PATH: /opt/megarepo/data/blobs/default
+    volumes:
+      - megarepo-data:/opt/megarepo/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: megarepo
+      POSTGRES_USER: megarepo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-megarepo}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U megarepo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  megarepo-data:
+  postgres-data:

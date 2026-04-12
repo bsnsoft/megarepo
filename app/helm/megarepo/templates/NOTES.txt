@@ -1,0 +1,45 @@
+MegaRepo has been deployed successfully!
+
+{{- if .Values.ingress.enabled }}
+
+Access MegaRepo at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+Get the application URL by running:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "megarepo.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Get the application URL by running:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  kubectl get --namespace {{ .Release.Namespace }} svc {{ include "megarepo.fullname" . }} -w
+
+{{- else if contains "ClusterIP" .Values.service.type }}
+
+Access MegaRepo by running:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "megarepo.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then open http://localhost:8080 in your browser.
+
+{{- end }}
+
+Default credentials:
+  Username: admin
+  Password: Check application logs for the generated password on first startup.
+
+{{- if .Values.postgresql.enabled }}
+
+PostgreSQL is running as a subchart.
+  Host: {{ include "megarepo.fullname" . }}-postgresql
+  Port: 5432
+  Database: {{ .Values.postgresql.auth.database }}
+  Username: {{ .Values.postgresql.auth.username }}
+{{- end }}
+
+For more information, visit: https://github.com/bsnsoft/megarepo

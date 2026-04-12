@@ -1,0 +1,24 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+  flyway:
+    enabled: true
+
+megarepo:
+  security:
+    jwt:
+      secret: test-secret-key-for-integration-tests-only
+      access-token-expiry: 30m
+      refresh-token-expiry: 7d
+    default-admin-password: admin123
+  proxy:
+    user-agent: MegaRepo-Test/1.0
+    connect-timeout: 10s
+    read-timeout: 30s
+    retry-on-timeout: 1
+
+logging:
+  level:
+    de.bsnsoft.megarepo: DEBUG

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "megarepo-test-package"
+version = "1.0.0"
+description = "Test package for validating MegaRepo PyPI hosting"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "twine>=4.0",
+    "build>=1.0",
+]

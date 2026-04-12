@@ -1,0 +1,36 @@
+CREATE TABLE ldap_servers (
+    id                       UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                     VARCHAR(200) NOT NULL UNIQUE,
+    sort_order               INTEGER      NOT NULL DEFAULT 0,
+    protocol                 VARCHAR(10)  NOT NULL DEFAULT 'ldap',
+    hostname                 VARCHAR(500) NOT NULL,
+    port                     INTEGER      NOT NULL DEFAULT 389,
+    search_base              VARCHAR(500) NOT NULL,
+    auth_scheme              VARCHAR(50)  NOT NULL DEFAULT 'simple',
+    auth_username            VARCHAR(500),
+    auth_password            VARCHAR(500),
+    connection_timeout       INTEGER      NOT NULL DEFAULT 30,
+    retry_delay              INTEGER      NOT NULL DEFAULT 300,
+    max_retries              INTEGER      NOT NULL DEFAULT 3,
+    user_base_dn             VARCHAR(500),
+    user_subtree             BOOLEAN      NOT NULL DEFAULT true,
+    user_object_class        VARCHAR(100) NOT NULL DEFAULT 'inetOrgPerson',
+    user_id_attribute        VARCHAR(100) NOT NULL DEFAULT 'uid',
+    user_name_attribute      VARCHAR(100) NOT NULL DEFAULT 'cn',
+    user_email_attribute     VARCHAR(100) NOT NULL DEFAULT 'mail',
+    ldap_groups_as_roles     BOOLEAN      NOT NULL DEFAULT true,
+    group_type               VARCHAR(50)  NOT NULL DEFAULT 'dynamic',
+    group_base_dn            VARCHAR(500),
+    group_subtree            BOOLEAN      NOT NULL DEFAULT true,
+    group_object_class       VARCHAR(100) DEFAULT 'groupOfNames',
+    group_id_attribute       VARCHAR(100) DEFAULT 'cn',
+    group_member_attribute   VARCHAR(100) DEFAULT 'member',
+    group_member_format      VARCHAR(200) DEFAULT 'uid=${username},${dn}',
+    user_member_of_attribute VARCHAR(100) DEFAULT 'memberOf',
+    enabled                  BOOLEAN      NOT NULL DEFAULT true,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_ldap_servers_sort_order ON ldap_servers(sort_order);
+CREATE INDEX idx_ldap_servers_enabled ON ldap_servers(enabled);

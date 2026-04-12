@@ -1,0 +1,59 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application runtime
+data/
+logs/
+*.log
+
+# Environment / secrets
+.env
+*.env.local
+*.env.production
+*-private.pem
+*.license
+
+# Node (web-ui)
+node_modules/
+dist/
+
+# Test artifacts
+*.hprof
+hs_err_pid*
+
+# Docker
+docker-compose.override.yml
+
+# Playwright
+test-results/
+playwright-report/
+.claude/
+
+# Test projects - generated artifacts
+test-projects/maven/target/
+test-projects/python/lib/
+test-projects/python/dist/
+test-projects/python/*.egg-info/
+test-projects/npm/node_modules/
+tools/license-keys/megarepo-private.pem
+.Rhistory
+.gitlab-ci.yml
+.gitlab/

@@ -1,0 +1,62 @@
+# MegaRepo Default Repository Setup
+# Standard configuration for most teams
+repositories:
+  # Maven
+  - name: maven-central
+    format: maven2
+    type: PROXY
+    remoteUrl: https://repo1.maven.org/maven2/
+  - name: maven-releases
+    format: maven2
+    type: HOSTED
+  - name: maven-snapshots
+    format: maven2
+    type: HOSTED
+  - name: maven-public
+    format: maven2
+    type: GROUP
+    members: [maven-central, maven-releases, maven-snapshots]
+
+  # npm
+  - name: npm-proxy
+    format: npm
+    type: PROXY
+    remoteUrl: https://registry.npmjs.org/
+  - name: npm-hosted
+    format: npm
+    type: HOSTED
+  - name: npm-public
+    format: npm
+    type: GROUP
+    members: [npm-proxy, npm-hosted]
+
+  # PyPI
+  - name: pypi-proxy
+    format: pypi
+    type: PROXY
+    remoteUrl: https://pypi.org/simple/
+  - name: pypi-hosted
+    format: pypi
+    type: HOSTED
+  - name: pypi-public
+    format: pypi
+    type: GROUP
+    members: [pypi-proxy, pypi-hosted]
+
+  # Raw
+  - name: raw-hosted
+    format: raw
+    type: HOSTED
+
+  # Docker
+  - name: docker-hosted
+    format: docker
+    type: HOSTED
+  - name: docker-hub-proxy
+    format: docker
+    type: PROXY
+    remoteUrl: https://registry-1.docker.io/
+  - name: docker-public
+    format: docker
+    type: GROUP
+    members: [docker-hub-proxy, docker-hosted]

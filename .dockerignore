@@ -1,0 +1,13 @@
+.gradle/
+build/
+*/build/
+!megarepo-app/build/libs/megarepo.jar
+.idea/
+*.iml
+.git/
+data/
+logs/
+node_modules/
+swagger.json
+docs/
+megarepo-integration-tests/

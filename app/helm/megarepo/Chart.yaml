@@ -1,0 +1,20 @@
+apiVersion: v2
+name: megarepo
+description: MegaRepo - Affordable artifact repository manager
+type: application
+version: 0.1.0
+appVersion: "0.2-beta"
+
+home: https://github.com/bsnsoft/megarepo
+sources:
+  - https://github.com/bsnsoft/megarepo
+
+maintainers:
+  - name: bsnsoft
+    url: https://bsnsoft.de
+
+dependencies:
+  - name: postgresql
+    version: "~16.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

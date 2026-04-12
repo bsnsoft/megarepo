@@ -1,0 +1,110 @@
+# MegaRepo Helm Chart Values
+# See https://github.com/bsnsoft/megarepo for documentation.
+
+replicaCount: 1
+
+image:
+  repository: bsnsoft/megarepo
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# The container port the Spring Boot application listens on.
+# Must match the server.port in the Docker image's application.yml.
+containerPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: megarepo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: megarepo-tls
+    #   hosts:
+    #     - megarepo.example.com
+
+persistence:
+  enabled: true
+  # Use an existing PVC instead of creating one
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 20Gi
+  # Mount path inside the container for blob storage
+  mountPath: /data
+
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 1000m
+
+# Additional environment variables passed to the MegaRepo container.
+# Example:
+#   env:
+#     SPRING_PROFILES_ACTIVE: production
+#     JAVA_OPTS: "-Xmx768m"
+env: {}
+
+# Spring Boot application properties injected via ConfigMap.
+# These are mounted as application-k8s.yml and activated via
+# SPRING_PROFILES_ACTIVE=k8s.
+# Example:
+#   springConfig:
+#     megarepo.storage.path: /data/blobs
+springConfig: {}
+
+# Liveness and readiness probes use Spring Boot Actuator.
+livenessProbe:
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+readinessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Bitnami PostgreSQL subchart configuration.
+# See https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+# IMPORTANT: Change auth.password before deploying to production!
+postgresql:
+  enabled: true
+  auth:
+    database: megarepo
+    username: megarepo
+    # Change this password before deploying to production!
+    password: megarepo
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# If postgresql.enabled is false, provide an external database URL.
+externalDatabase:
+  host: ""
+  port: 5432
+  database: megarepo
+  username: megarepo
+  password: ""

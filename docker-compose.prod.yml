@@ -1,0 +1,128 @@
+# =============================================================================
+# MegaRepo — Production Docker Compose
+# =============================================================================
+# Quick start:
+#   1. Copy .env.example to .env and change POSTGRES_PASSWORD + MEGAREPO_JWT_SECRET
+#   2. docker compose -f docker-compose.prod.yml up -d
+#   3. Open http://localhost:8080 — login with admin / admin123
+#   4. Change the admin password immediately!
+#
+# For TLS (HTTPS), uncomment the nginx service below and see nginx.conf.template.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MegaRepo Application
+  # ---------------------------------------------------------------------------
+  megarepo:
+    image: bsnsoft/megarepo:latest
+    ports:
+      - "${MEGAREPO_PORT:-8080}:8080"
+    environment:
+      # --- Database connection (must match the db service below) ---
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/megarepo?stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: megarepo
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+      # --- Security ---
+      # JWT signing secret — MUST be changed to a random string (>= 32 chars)
+      MEGAREPO_SECURITY_JWT_SECRET: ${MEGAREPO_JWT_SECRET:?Set MEGAREPO_JWT_SECRET in .env}
+      # Default admin password on first startup (change via UI immediately)
+      MEGAREPO_SECURITY_DEFAULT_ADMIN_PASSWORD: ${MEGAREPO_ADMIN_PASSWORD:-admin123}
+
+      # --- Storage paths (inside the container) ---
+      MEGAREPO_DATA_DIRECTORY: /opt/megarepo/data
+      MEGAREPO_BLOB_STORES_DEFAULT_PATH: /opt/megarepo/data/blobs/default
+
+      # --- Proxy settings (for proxy repositories fetching from remote) ---
+      MEGAREPO_PROXY_CONNECT_TIMEOUT: ${MEGAREPO_PROXY_CONNECT_TIMEOUT:-10s}
+      MEGAREPO_PROXY_READ_TIMEOUT: ${MEGAREPO_PROXY_READ_TIMEOUT:-30s}
+
+      # --- Upload limits ---
+      SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE: ${MEGAREPO_MAX_UPLOAD_SIZE:-1GB}
+      SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE: ${MEGAREPO_MAX_UPLOAD_SIZE:-1GB}
+
+      # --- JVM tuning (container-aware defaults) ---
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+UseG1GC}
+    volumes:
+      - megarepo-data:/opt/megarepo/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${MEGAREPO_MEMORY_LIMIT:-1g}
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: megarepo
+      POSTGRES_USER: megarepo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U megarepo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # Not exposed to the host by default — only megarepo can reach it.
+    # Uncomment the next two lines if you need direct DB access for debugging.
+    # ports:
+    #   - "5432:5432"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEMORY_LIMIT:-512m}
+
+  # ---------------------------------------------------------------------------
+  # Nginx Reverse Proxy with TLS (optional)
+  # ---------------------------------------------------------------------------
+  # Uncomment this section to terminate TLS in front of MegaRepo.
+  # You also need:
+  #   - nginx.conf mounted at /etc/nginx/conf.d/default.conf (see nginx.conf.template)
+  #   - TLS certificates (use the certbot service below, or bring your own)
+  #
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - certbot-webroot:/var/www/certbot:ro
+  #     - certbot-certs:/etc/letsencrypt:ro
+  #   depends_on:
+  #     - megarepo
+  #   restart: unless-stopped
+  #
+  # # Let's Encrypt certificate provisioning.
+  # # First run:  docker compose -f docker-compose.prod.yml run --rm certbot certonly --webroot -w /var/www/certbot -d your-domain.com
+  # # Renewal:    docker compose -f docker-compose.prod.yml run --rm certbot renew
+  # certbot:
+  #   image: certbot/certbot
+  #   volumes:
+  #     - certbot-webroot:/var/www/certbot
+  #     - certbot-certs:/etc/letsencrypt
+
+volumes:
+  megarepo-data:
+    name: megarepo-data
+  postgres-data:
+    name: megarepo-postgres-data
+  # Uncomment if using the nginx + certbot services above:
+  # certbot-webroot:
+  # certbot-certs:
