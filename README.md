@@ -6,8 +6,9 @@ Affordable artifact repository manager by [bsnsoft.de](https://bsnsoft.de). A So
 
 ## Pricing
 
-- **Free** for private users and companies with fewer than 50 employees
-- **600 EUR/year per instance** for larger organizations
+- **Free for everyone** while MegaRepo is below version 1.0.0
+- After 1.0: free for small teams, universities, and personal use
+- Commercial licensing — [get in touch](https://bsnsoft.de/kontakt.html)
 - No per-seat pricing, no license server, no phone-home
 
 ## Features
