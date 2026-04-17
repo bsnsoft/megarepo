@@ -8,6 +8,7 @@ import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
+import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServletRequest;
@@ -64,6 +65,9 @@ class RepositoryRouterTest {
     private ActivityBroadcaster activityBroadcaster;
 
     @Mock
+    private NvdFirewallService nvdFirewallService;
+
+    @Mock
     private HttpServletRequest request;
 
     @Mock
@@ -73,7 +77,9 @@ class RepositoryRouterTest {
 
     @BeforeEach
     void setUp() {
-        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster);
+        Mockito.lenient().when(nvdFirewallService.checkDownload(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(NvdFirewallService.CheckResult.allowed());
+        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster, nvdFirewallService);
     }
 
     @AfterEach

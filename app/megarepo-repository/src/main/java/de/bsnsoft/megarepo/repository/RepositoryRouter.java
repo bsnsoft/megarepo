@@ -14,6 +14,7 @@ import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
+import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -47,18 +48,21 @@ public class RepositoryRouter {
     private final GroupHandler groupHandler;
     private final AuditService auditService;
     private final ActivityBroadcaster activityBroadcaster;
+    private final NvdFirewallService nvdFirewallService;
 
     public RepositoryRouter(
             RepositoryConfigService repositoryConfigService,
             FormatRegistry formatRegistry,
             GroupHandler groupHandler,
             AuditService auditService,
-            ActivityBroadcaster activityBroadcaster) {
+            ActivityBroadcaster activityBroadcaster,
+            NvdFirewallService nvdFirewallService) {
         this.repositoryConfigService = repositoryConfigService;
         this.formatRegistry = formatRegistry;
         this.groupHandler = groupHandler;
         this.auditService = auditService;
         this.activityBroadcaster = activityBroadcaster;
+        this.nvdFirewallService = nvdFirewallService;
     }
 
     @RequestMapping(
@@ -101,6 +105,16 @@ public class RepositoryRouter {
                         case PROXY -> handler.handleProxyGet(repo, path, request);
                         case GROUP -> throw new IllegalStateException("Unreachable");
                     };
+        }
+
+        if (formatResponse instanceof ContentResponse content) {
+            String currentUser = currentUser(request);
+            var nvdResult = nvdFirewallService.checkDownload(repo.id(), path, repoName, currentUser);
+            if (nvdResult.blocked()) {
+                try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
+                writeNvdBlockResponse(response, nvdResult);
+                return;
+            }
         }
 
         writeResponse(formatResponse, request, response);
@@ -410,6 +424,52 @@ public class RepositoryRouter {
 
     private void sendError(HttpServletResponse response, int status, String message) throws IOException {
         response.sendError(status, message);
+    }
+
+    private void writeNvdBlockResponse(
+            HttpServletResponse response, de.bsnsoft.megarepo.repository.nvd.NvdFirewallService.CheckResult result)
+            throws IOException {
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("application/json");
+        response.setHeader("X-NVD-Firewall", "blocked");
+        StringBuilder json = new StringBuilder();
+        json.append("{\"error\":\"NVD_FIREWALL_BLOCKED\",")
+                .append("\"message\":\"Download blocked — component has known vulnerabilities above the configured CVSS threshold.\",")
+                .append("\"maxCvssScore\":").append(result.maxScore()).append(",")
+                .append("\"vulnerabilities\":[");
+        var cves = result.vulnerabilities();
+        for (int i = 0; i < cves.size(); i++) {
+            var c = cves.get(i);
+            if (i > 0) json.append(",");
+            json.append("{\"cveId\":").append(jsonString(c.cveId())).append(",")
+                    .append("\"cvssScore\":").append(c.cvssScore()).append(",")
+                    .append("\"severity\":").append(jsonString(c.severity())).append(",")
+                    .append("\"description\":").append(jsonString(c.description())).append("}");
+        }
+        json.append("]}");
+        response.getWriter().write(json.toString());
+        response.getWriter().flush();
+    }
+
+    private static String jsonString(String s) {
+        if (s == null) return "null";
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        sb.append("\"");
+        return sb.toString();
     }
 
     private static boolean isAuthenticated() {

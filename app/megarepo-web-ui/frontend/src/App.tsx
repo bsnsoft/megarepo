@@ -21,6 +21,7 @@ import RolesPage from './pages/security/RolesPage';
 import LdapPage from './pages/security/LdapPage';
 import SslCertificatesPage from './pages/security/SslCertificatesPage';
 import AnonymousAccessPage from './pages/security/AnonymousAccessPage';
+import NvdFirewallPage from './pages/security/NvdFirewallPage';
 import StatusPage from './pages/system/StatusPage';
 import TasksPage from './pages/system/TasksPage';
 import AuditLogPage from './pages/system/AuditLogPage';
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="/admin/ldap" element={<LdapPage />} />
               <Route path="/admin/ssl" element={<SslCertificatesPage />} />
               <Route path="/admin/anonymous" element={<AnonymousAccessPage />} />
+              <Route path="/admin/nvd-firewall" element={<NvdFirewallPage />} />
 
               {/* Administration - System */}
               <Route path="/admin/status" element={<StatusPage />} />

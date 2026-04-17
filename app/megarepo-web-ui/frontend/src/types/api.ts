@@ -245,6 +245,49 @@ export interface LicenseStatus {
   message: string;
 }
 
+export interface NvdFirewallSettings {
+  enabled: boolean;
+  apiKey: string | null;
+  cvssThreshold: number;
+}
+
+export interface NvdSyncState {
+  status: 'IDLE' | 'SYNCING' | 'ERROR';
+  mode: 'FULL' | 'DELTA' | null;
+  startedAt: string | null;
+  lastSyncAt: string | null;
+  lastSuccessAt: string | null;
+  totalCves: number;
+  syncedCves: number;
+  totalResults: number | null;
+  errorMessage: string | null;
+}
+
+export interface NvdBlock {
+  id: number;
+  timestamp: string;
+  userId: string | null;
+  repository: string;
+  path: string;
+  componentKey: string;
+  maxCvssScore: number;
+  cveDetails: Array<{
+    cveId: string;
+    cvssScore: number;
+    severity: string | null;
+    description: string | null;
+  }>;
+}
+
+export interface NvdWhitelistEntry {
+  id: number;
+  entryType: 'COMPONENT' | 'CVE';
+  value: string;
+  reason: string | null;
+  addedAt: string;
+  addedBy: string | null;
+}
+
 /** Supported repository formats */
 export type RepositoryFormat = 'maven2' | 'pypi' | 'npm' | 'raw' | 'docker';
 
