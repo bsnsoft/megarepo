@@ -79,11 +79,14 @@ public class FirstRunSetup implements ApplicationRunner {
 
         log.info("No repositories found — creating default repositories");
 
-        // Maven
-        createHostedRepo("maven-releases", "maven");
-        createHostedRepo("maven-snapshots", "maven");
-        createProxyRepo("maven-central", "maven", "https://repo1.maven.org/maven2/");
-        createGroupRepo("maven-public", "maven", List.of("maven-central", "maven-releases", "maven-snapshots"));
+        // Maven — note: the registered format key is "maven2" (Sonatype-Nexus
+        // convention), NOT "maven". Must match MavenFormatPlugin.getFormat() and
+        // repo-presets/default.yml; otherwise FormatRegistry.getPlugin() throws
+        // UnsupportedFormatException at request time.
+        createHostedRepo("maven-releases", "maven2");
+        createHostedRepo("maven-snapshots", "maven2");
+        createProxyRepo("maven-central", "maven2", "https://repo1.maven.org/maven2/");
+        createGroupRepo("maven-public", "maven2", List.of("maven-central", "maven-releases", "maven-snapshots"));
 
         // npm
         createHostedRepo("npm-hosted", "npm");
