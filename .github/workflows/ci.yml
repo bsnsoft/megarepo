@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install -g pnpm
+      - run: npm install -g pnpm@10.33.0
       - name: Build
         working-directory: app
         run: ./gradlew build -x test -x :megarepo-integration-tests:test
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install -g pnpm
+      - run: npm install -g pnpm@10.33.0
       - name: Unit tests
         working-directory: app
         run: ./gradlew test -x :megarepo-integration-tests:test -x :megarepo-web-ui:npmInstall -x :megarepo-web-ui:frontendBuild -x :megarepo-web-ui:copyFrontend
