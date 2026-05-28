@@ -35,6 +35,17 @@ public class MavenFormatPlugin implements FormatPlugin {
         return "maven2";
     }
 
+    /**
+     * Accept legacy/Nexus-aligned aliases so requests routed against
+     * {@code "maven"}-typed repositories (older configs, hand-rolled YAML
+     * presets, pre-V9 seeds) resolve to this plugin instead of failing
+     * with {@code UnsupportedFormatException}.
+     */
+    @Override
+    public Set<String> getAliases() {
+        return Set.of("maven");
+    }
+
     @Override
     public String getDisplayName() {
         return "Maven";
