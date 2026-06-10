@@ -278,6 +278,65 @@ class ProxyFetchServiceTest {
     }
 
     @Test
+    void nonOkStatusWithNullBody_returns502_doesNotThrowNpe() throws IOException {
+        // Reproduces the eurodata report: a forward proxy returns a non-2xx status
+        // (e.g. 403/407) with a null response body. The error-handling branch must not
+        // call body().close() on null and crash with a 500 NPE.
+        RepositoryConfig repo = createProxyRepo();
+        String path = "com/example/artifact/1.0/artifact-1.0.jar";
+
+        when(negativeCacheService.isEnabled(repo)).thenReturn(false);
+
+        var remoteResponse = new RemoteHttpClient.RemoteResponse(403, null, 0, "text/html");
+        when(remoteHttpClient.fetch(eq(REMOTE_URL + "/" + path), any())).thenReturn(remoteResponse);
+
+        Optional<FormatResponse> result = service.fetchAndCache(repo, path, extractor);
+
+        assertTrue(result.isPresent());
+        assertInstanceOf(ErrorResponse.class, result.get());
+        assertEquals(502, ((ErrorResponse) result.get()).statusCode());
+    }
+
+    @Test
+    void status404WithNullBody_returns404_doesNotThrowNpe() throws IOException {
+        RepositoryConfig repo = createProxyRepo();
+        String path = "com/example/missing/1.0/missing-1.0.jar";
+
+        when(negativeCacheService.isEnabled(repo)).thenReturn(true);
+        when(negativeCacheService.isNegativelyCached(REPO_ID, path)).thenReturn(false);
+        when(negativeCacheService.getNegativeCacheTtl(repo)).thenReturn(1440);
+
+        var remoteResponse = new RemoteHttpClient.RemoteResponse(404, null, 0, "text/html");
+        when(remoteHttpClient.fetch(eq(REMOTE_URL + "/" + path), any())).thenReturn(remoteResponse);
+
+        Optional<FormatResponse> result = service.fetchAndCache(repo, path, extractor);
+
+        assertTrue(result.isPresent());
+        assertInstanceOf(ErrorResponse.class, result.get());
+        assertEquals(404, ((ErrorResponse) result.get()).statusCode());
+        verify(negativeCacheService).cacheNegativeResult(REPO_ID, path, 1440);
+    }
+
+    @Test
+    void status200WithNullBody_returns502_doesNotThrowNpe() throws IOException {
+        RepositoryConfig repo = createProxyRepo();
+        String path = "com/example/artifact/1.0/artifact-1.0.jar";
+
+        when(negativeCacheService.isEnabled(repo)).thenReturn(false);
+
+        var remoteResponse = new RemoteHttpClient.RemoteResponse(200, null, -1, "application/octet-stream");
+        when(remoteHttpClient.fetch(eq(REMOTE_URL + "/" + path), any())).thenReturn(remoteResponse);
+
+        Optional<FormatResponse> result = service.fetchAndCache(repo, path, extractor);
+
+        assertTrue(result.isPresent());
+        assertInstanceOf(ErrorResponse.class, result.get());
+        assertEquals(502, ((ErrorResponse) result.get()).statusCode());
+        // Must not have attempted to store an empty blob
+        verify(assetRepository, never()).save(any(AssetEntity.class));
+    }
+
+    @Test
     void getRemoteUrl_stripsTrailingSlash() {
         RepositoryConfig repo = new RepositoryConfig(
                 REPO_ID,

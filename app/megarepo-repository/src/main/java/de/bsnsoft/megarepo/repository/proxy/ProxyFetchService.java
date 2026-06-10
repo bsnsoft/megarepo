@@ -26,6 +26,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HashMap;
@@ -220,7 +221,7 @@ public class ProxyFetchService {
             RemoteHttpClient.RemoteResponse response = fetchFromRemote(repo, fullUrl);
 
             if (response.statusCode() == 404) {
-                response.body().close();
+                closeQuietly(response.body());
                 if (negativeCacheService.isEnabled(repo)) {
                     int ttl = negativeCacheService.getNegativeCacheTtl(repo);
                     negativeCacheService.cacheNegativeResult(repo.id(), path, ttl);
@@ -230,7 +231,7 @@ public class ProxyFetchService {
             }
 
             if (response.statusCode() >= 500) {
-                response.body().close();
+                closeQuietly(response.body());
                 log.warn(
                         "Upstream server error {} for repo={} path={}",
                         response.statusCode(),
@@ -242,7 +243,7 @@ public class ProxyFetchService {
             }
 
             if (response.statusCode() != 200) {
-                response.body().close();
+                closeQuietly(response.body());
                 log.warn(
                         "Remote returned status {} for repo={} path={}",
                         response.statusCode(),
@@ -251,6 +252,13 @@ public class ProxyFetchService {
                 return Optional.of(new ErrorResponse(
                         502,
                         "Remote returned status %d for path: %s".formatted(response.statusCode(), path)));
+            }
+
+            // Defensive: a 200 with a null body (can occur through some forward-proxy setups)
+            // must not crash the digest pipeline with an NPE — treat it as "nothing to cache".
+            if (response.body() == null) {
+                log.warn("Remote returned 200 with null body for repo={} path={}", repo.name(), path);
+                return Optional.of(new ErrorResponse(502, "Upstream returned an empty response for path: " + path));
             }
 
             // Successful fetch - stream through digest, store blob, create asset
@@ -530,7 +538,7 @@ public class ProxyFetchService {
             RemoteHttpClient.RemoteResponse response = fetchFromRemote(repo, upstreamUrl);
 
             if (response.statusCode() == 404) {
-                response.body().close();
+                closeQuietly(response.body());
                 if (negativeCacheService.isEnabled(repo)) {
                     int ttl = negativeCacheService.getNegativeCacheTtl(repo);
                     negativeCacheService.cacheNegativeResult(repo.id(), path, ttl);
@@ -540,7 +548,7 @@ public class ProxyFetchService {
             }
 
             if (response.statusCode() >= 500) {
-                response.body().close();
+                closeQuietly(response.body());
                 log.warn(
                         "Upstream server error {} for repo={} url={}",
                         response.statusCode(),
@@ -552,10 +560,16 @@ public class ProxyFetchService {
             }
 
             if (response.statusCode() != 200) {
-                response.body().close();
+                closeQuietly(response.body());
                 log.warn("Remote returned status {} for repo={} url={}", response.statusCode(), repo.name(), upstreamUrl);
                 return Optional.of(new FormatResponse.ErrorResponse(
                         502, "Remote returned status %d for url: %s".formatted(response.statusCode(), upstreamUrl)));
+            }
+
+            if (response.body() == null) {
+                log.warn("Remote returned 200 with null body for repo={} url={}", repo.name(), upstreamUrl);
+                return Optional.of(
+                        new FormatResponse.ErrorResponse(502, "Upstream returned an empty response for path: " + path));
             }
 
             long fetchStart = System.currentTimeMillis();
@@ -578,6 +592,27 @@ public class ProxyFetchService {
         } catch (IOException e) {
             log.error("Failed to fetch from upstream for repo={} url={}: {}", repo.name(), upstreamUrl, e.getMessage());
             return Optional.of(new FormatResponse.ErrorResponse(502, "Failed to fetch from remote: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Closes an upstream response body, tolerating a {@code null} stream.
+     *
+     * <p>The JDK {@link java.net.http.HttpClient} normally yields a non-null (possibly empty)
+     * body for every status code. However, when fetching through a forward HTTP proxy, certain
+     * proxy-mediated responses (e.g. {@code 407 Proxy Authentication Required}, proxy-injected
+     * error pages, or some redirect/tunnel edge cases) can surface a {@code RemoteResponse} whose
+     * {@code body()} is {@code null}. Guarding here keeps the error-handling branches from turning
+     * a clean non-2xx upstream status into an internal {@code 500} NPE.
+     */
+    private static void closeQuietly(InputStream body) {
+        if (body == null) {
+            return;
+        }
+        try {
+            body.close();
+        } catch (IOException e) {
+            log.debug("Failed to close upstream response body: {}", e.getMessage());
         }
     }
 
