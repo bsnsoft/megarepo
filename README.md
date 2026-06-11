@@ -238,9 +238,35 @@ MegaRepo is configured via `application.yml` or environment variables. Key prope
 | `megarepo.security.default-admin-password`| `admin123`                 | Initial admin password               |
 | `megarepo.proxy.connect-timeout`          | `30s`                      | Proxy repository connect timeout     |
 | `megarepo.proxy.read-timeout`             | `60s`                      | Proxy repository read timeout        |
+| `megarepo.outbound-proxy.enabled`         | `false`                    | Route upstream traffic through a corporate forward proxy |
+| `megarepo.outbound-proxy.host` / `.port`  | – / `3128`                 | Forward proxy address                |
+| `megarepo.outbound-proxy.username` / `.password` | –                   | Proxy authentication (Basic)         |
+| `megarepo.outbound-proxy.non-proxy-hosts` | `[]`                       | Hosts bypassing the proxy (`*` wildcard) |
 | `spring.servlet.multipart.max-file-size`  | `1GB`                      | Maximum upload file size             |
 
 Environment variables follow Spring Boot conventions: `MEGAREPO_SECURITY_JWT_SECRET`, `SPRING_DATASOURCE_URL`, etc.
+
+### Running behind a corporate proxy
+
+If MegaRepo has no direct internet access, route all upstream fetches through
+your forward proxy — including proxy authentication, which plain
+`JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=..."` cannot provide:
+
+```bash
+MEGAREPO_OUTBOUNDPROXY_ENABLED=true
+MEGAREPO_OUTBOUNDPROXY_HOST=proxy.corp.example.com
+MEGAREPO_OUTBOUNDPROXY_PORT=3128
+MEGAREPO_OUTBOUNDPROXY_USERNAME=megarepo
+MEGAREPO_OUTBOUNDPROXY_PASSWORD=change-me
+MEGAREPO_OUTBOUNDPROXY_NONPROXYHOSTS=localhost,*.internal.example.com
+```
+
+The Helm chart exposes this as the `outboundProxy` block in `values.yaml`
+(with optional `existingSecret` for the password). Proxy credentials are
+deliberately deployment-side only — they are not configurable in the web UI
+and never stored in the database. See
+[docs/admin-guide.md → Running Behind a Corporate Proxy](docs/admin-guide.md#running-behind-a-corporate-proxy)
+for details, including the legacy `JAVA_TOOL_OPTIONS` variant.
 
 ## Deployment
 

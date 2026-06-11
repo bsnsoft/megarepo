@@ -10,7 +10,9 @@ import java.io.InputStream;
 import java.net.Authenticator;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
+import java.net.Proxy;
 import java.net.ProxySelector;
+import java.net.SocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,6 +20,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -42,15 +45,55 @@ public class RemoteHttpClient {
             @Value("${megarepo.proxy.connect-timeout:10s}") Duration connectTimeout,
             @Value("${megarepo.proxy.read-timeout:30s}") Duration readTimeout,
             @Value("${megarepo.proxy.user-agent:MegaRepo/1.0}") String userAgent,
-            @Value("${megarepo.proxy.retry-on-timeout:1}") int retryOnTimeout) {
+            @Value("${megarepo.proxy.retry-on-timeout:1}") int retryOnTimeout,
+            OutboundProxyProperties outboundProxy) {
         this.userAgent = userAgent;
         this.connectTimeout = connectTimeout;
         this.readTimeout = readTimeout;
         this.retryOnTimeout = retryOnTimeout;
-        this.defaultHttpClient = HttpClient.newBuilder()
+        this.defaultHttpClient = buildDefaultClient(connectTimeout, outboundProxy);
+    }
+
+    /**
+     * Builds the default client used for all upstream fetches.
+     *
+     * <p>When the global outbound proxy ({@code megarepo.outbound-proxy.*}) is enabled,
+     * the client routes all traffic through the configured forward proxy (with optional
+     * proxy authentication and non-proxy-host bypass). Otherwise the JDK default proxy
+     * selector applies, so legacy JVM properties ({@code -Dhttp.proxyHost=...} via
+     * {@code JAVA_TOOL_OPTIONS}) keep working exactly as before.
+     */
+    private static HttpClient buildDefaultClient(Duration connectTimeout, OutboundProxyProperties outboundProxy) {
+        var builder = HttpClient.newBuilder()
                 .connectTimeout(connectTimeout)
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+                .followRedirects(HttpClient.Redirect.NORMAL);
+
+        if (outboundProxy != null && outboundProxy.enabled()) {
+            if (outboundProxy.host() == null || outboundProxy.host().isBlank()) {
+                throw new IllegalStateException(
+                        "megarepo.outbound-proxy.enabled=true but megarepo.outbound-proxy.host is not set");
+            }
+            builder.proxy(new OutboundProxySelector(outboundProxy));
+            if (outboundProxy.hasAuth()) {
+                // The JDK disables Basic auth for CONNECT tunneling (i.e. proxying HTTPS)
+                // by default via the jdk.http.auth.tunneling.disabledSchemes net property.
+                // Clear it programmatically (unless the operator already set it) so that
+                // authenticated proxies work for https:// upstreams, too.
+                if (System.getProperty("jdk.http.auth.tunneling.disabledSchemes") == null) {
+                    System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
+                }
+                builder.authenticator(new ProxyAuthenticator(
+                        outboundProxy.username(), outboundProxy.password()));
+            }
+            log.info(
+                    "Outbound proxy enabled: {}:{} (auth: {}, non-proxy-hosts: {})",
+                    outboundProxy.host(),
+                    outboundProxy.port(),
+                    outboundProxy.hasAuth() ? "yes" : "no",
+                    outboundProxy.nonProxyHosts());
+        }
+
+        return builder.build();
     }
 
     public RemoteResponse fetch(String remoteUrl, Map<String, String> extraHeaders) throws IOException {
@@ -194,6 +237,69 @@ public class RemoteHttpClient {
             InputStream body,
             long contentLength,
             String contentType) {}
+
+    /**
+     * Proxy selector for the global outbound proxy: routes everything through the
+     * configured forward proxy except hosts matching the non-proxy-hosts patterns.
+     */
+    static final class OutboundProxySelector extends ProxySelector {
+
+        private final OutboundProxyProperties config;
+        private final Proxy proxy;
+
+        OutboundProxySelector(OutboundProxyProperties config) {
+            this.config = config;
+            this.proxy = new Proxy(
+                    Proxy.Type.HTTP,
+                    InetSocketAddress.createUnresolved(config.host(), config.port()));
+        }
+
+        @Override
+        public List<Proxy> select(URI uri) {
+            if (config.isNonProxyHost(uri.getHost())) {
+                return List.of(Proxy.NO_PROXY);
+            }
+            return List.of(proxy);
+        }
+
+        @Override
+        public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+            log.warn("Failed to connect to outbound proxy {} for {}: {}", sa, uri, ioe.getMessage());
+        }
+    }
+
+    /**
+     * Authenticator that answers only proxy authentication challenges
+     * ({@link Authenticator.RequestorType#PROXY}). Upstream (server) auth is handled
+     * separately via explicit {@code Authorization} headers in
+     * {@link #fetchWithAuth(String, String, String)} and must never receive the
+     * proxy credentials.
+     */
+    static final class ProxyAuthenticator extends Authenticator {
+
+        private final String username;
+        private final char[] password;
+
+        ProxyAuthenticator(String username, String password) {
+            this.username = username;
+            this.password = password.toCharArray();
+        }
+
+        @Override
+        protected PasswordAuthentication getPasswordAuthentication() {
+            return authFor(getRequestorType());
+        }
+
+        /**
+         * Returns credentials only for proxy challenges; visible for testing.
+         */
+        PasswordAuthentication authFor(RequestorType type) {
+            if (type == RequestorType.PROXY) {
+                return new PasswordAuthentication(username, password.clone());
+            }
+            return null;
+        }
+    }
 
     /**
      * Configuration for an HTTP proxy used for upstream fetches.

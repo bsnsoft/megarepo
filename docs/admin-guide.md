@@ -184,6 +184,82 @@ megarepo:
     retry-on-timeout: 1
 ```
 
+### Running Behind a Corporate Proxy
+
+If MegaRepo itself has no direct internet access and all egress traffic must go
+through a corporate forward proxy (often with authentication), configure the
+global outbound proxy. It applies to **all upstream fetches** of proxy
+repositories (Maven Central, PyPI, npmjs, Docker Hub, ...).
+
+```yaml
+megarepo:
+  outbound-proxy:
+    enabled: true
+    host: proxy.corp.example.com
+    port: 3128
+    # Optional: proxy authentication (Basic)
+    username: megarepo
+    password: change-me
+    # Optional: hosts that bypass the proxy ('*' wildcard supported)
+    non-proxy-hosts:
+      - localhost
+      - "*.internal.example.com"
+```
+
+The same settings via environment variables (e.g. for Docker, Kubernetes, or
+Helm `values.yaml` → container env):
+
+```bash
+MEGAREPO_OUTBOUNDPROXY_ENABLED=true
+MEGAREPO_OUTBOUNDPROXY_HOST=proxy.corp.example.com
+MEGAREPO_OUTBOUNDPROXY_PORT=3128
+MEGAREPO_OUTBOUNDPROXY_USERNAME=megarepo
+MEGAREPO_OUTBOUNDPROXY_PASSWORD=change-me
+MEGAREPO_OUTBOUNDPROXY_NONPROXYHOSTS=localhost,*.internal.example.com
+```
+
+With the bundled Helm chart, use the `outboundProxy` block in `values.yaml` —
+it maps onto exactly these environment variables:
+
+```yaml
+outboundProxy:
+  enabled: true
+  host: proxy.corp.example.com
+  port: 3128
+  username: megarepo
+  # Either inline (ends up in the pod spec) ...
+  password: change-me
+  # ... or preferably from an existing Kubernetes Secret:
+  # existingSecret: megarepo-proxy-credentials
+  # passwordKey: proxy-password
+  nonProxyHosts:
+    - localhost
+    - "*.internal.example.com"
+```
+
+Notes:
+
+- **Proxy auth for HTTPS upstreams**: the JDK disables Basic authentication for
+  CONNECT tunneling by default (`jdk.http.auth.tunneling.disabledSchemes=Basic`).
+  When `megarepo.outbound-proxy` is enabled with credentials, MegaRepo clears
+  this property programmatically at startup so authenticated proxies also work
+  for `https://` upstreams. If you set the property yourself (e.g. via
+  `JAVA_TOOL_OPTIONS`), your value wins and is left untouched.
+- **Credentials are deployment-side by design.** Proxy credentials are *not*
+  configurable in the web UI or stored in the database — they stay in your
+  deployment configuration (env vars, Helm values, Kubernetes Secrets), where
+  your existing secret management applies.
+- **Legacy JVM properties keep working.** With `enabled: false` (the default),
+  behavior is unchanged: `JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=... -Dhttp.proxyPort=...
+  -Dhttps.proxyHost=... -Dhttps.proxyPort=..."` is still honored. Note that this
+  legacy path cannot carry proxy credentials — for authenticated proxies use
+  `megarepo.outbound-proxy.*`.
+- **Startup log**: when enabled, MegaRepo logs one INFO line
+  `Outbound proxy enabled: <host>:<port> (auth: yes/no, ...)`. The password is
+  never logged.
+- Per-repository HTTP proxy settings (repository attribute `proxy.httpProxy`)
+  take precedence over the global outbound proxy for that repository.
+
 ### TLS
 
 ```yaml

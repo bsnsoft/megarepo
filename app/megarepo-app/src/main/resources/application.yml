@@ -93,6 +93,18 @@ megarepo:
     connect-timeout: 10s
     read-timeout: 30s
     retry-on-timeout: 1
+  # Global outbound (egress) proxy for all upstream fetches, e.g. when MegaRepo
+  # runs behind a corporate forward proxy that requires authentication.
+  # All values can be set via environment variables (MEGAREPO_OUTBOUNDPROXY_HOST etc.).
+  # See docs/admin-guide.md "Running Behind a Corporate Proxy".
+  outbound-proxy:
+    enabled: false
+    host: ""
+    port: 3128
+    username: ""
+    password: ""
+    # Hosts/patterns that bypass the proxy, e.g. ["localhost", "*.internal.example.com"]
+    non-proxy-hosts: []
   docker:
     default-repository: docker-hosted
   license:

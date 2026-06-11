@@ -47,6 +47,32 @@ spec:
             - name: SPRING_PROFILES_ACTIVE
               value: "k8s"
             {{- end }}
+            {{- if .Values.outboundProxy.enabled }}
+            - name: MEGAREPO_OUTBOUNDPROXY_ENABLED
+              value: "true"
+            - name: MEGAREPO_OUTBOUNDPROXY_HOST
+              value: {{ required "outboundProxy.host is required when outboundProxy.enabled" .Values.outboundProxy.host | quote }}
+            - name: MEGAREPO_OUTBOUNDPROXY_PORT
+              value: {{ .Values.outboundProxy.port | quote }}
+            {{- if .Values.outboundProxy.username }}
+            - name: MEGAREPO_OUTBOUNDPROXY_USERNAME
+              value: {{ .Values.outboundProxy.username | quote }}
+            {{- end }}
+            {{- if .Values.outboundProxy.existingSecret }}
+            - name: MEGAREPO_OUTBOUNDPROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.outboundProxy.existingSecret }}
+                  key: {{ .Values.outboundProxy.passwordKey | default "proxy-password" }}
+            {{- else if .Values.outboundProxy.password }}
+            - name: MEGAREPO_OUTBOUNDPROXY_PASSWORD
+              value: {{ .Values.outboundProxy.password | quote }}
+            {{- end }}
+            {{- if .Values.outboundProxy.nonProxyHosts }}
+            - name: MEGAREPO_OUTBOUNDPROXY_NONPROXYHOSTS
+              value: {{ join "," .Values.outboundProxy.nonProxyHosts | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

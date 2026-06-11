@@ -54,6 +54,35 @@ resources:
     memory: 1Gi
     cpu: 1000m
 
+# Route all upstream (proxy-repository) traffic through a corporate forward
+# proxy, including proxy authentication. Maps to the megarepo.outbound-proxy.*
+# Spring properties via environment variables.
+# Example:
+#   outboundProxy:
+#     enabled: true
+#     host: proxy.corp.example.com
+#     port: 3128
+#     username: megarepo
+#     existingSecret: megarepo-proxy-credentials   # key: proxy-password
+#     nonProxyHosts:
+#       - localhost
+#       - "*.internal.example.com"
+outboundProxy:
+  enabled: false
+  host: ""
+  port: 3128
+  # Optional proxy credentials (Basic auth). Leave empty for an unauthenticated proxy.
+  username: ""
+  # Plaintext password — ends up in the pod spec. Prefer existingSecret in production.
+  password: ""
+  # Name of an existing Secret containing the proxy password. Takes precedence
+  # over .password when set.
+  existingSecret: ""
+  # Key inside existingSecret that holds the proxy password.
+  passwordKey: "proxy-password"
+  # Hosts/patterns that bypass the proxy ('*' wildcard supported).
+  nonProxyHosts: []
+
 # Additional environment variables passed to the MegaRepo container.
 # Example:
 #   env:

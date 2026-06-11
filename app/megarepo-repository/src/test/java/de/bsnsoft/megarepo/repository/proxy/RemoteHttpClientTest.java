@@ -14,8 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 class RemoteHttpClientTest {
 
-    private final RemoteHttpClient client =
-            new RemoteHttpClient(Duration.ofSeconds(10), Duration.ofSeconds(30), "MegaRepo/1.0-test", 1);
+    private final RemoteHttpClient client = new RemoteHttpClient(
+            Duration.ofSeconds(10),
+            Duration.ofSeconds(30),
+            "MegaRepo/1.0-test",
+            1,
+            OutboundProxyProperties.disabled());
 
     @Test
     void fetchViaProxy_createsProxiedClient() throws Exception {
