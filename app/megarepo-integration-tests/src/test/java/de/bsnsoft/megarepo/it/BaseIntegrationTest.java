@@ -15,6 +15,10 @@ import java.nio.file.Path;
 /**
  * Base integration test that uses an external PostgreSQL instance (docker compose up db).
  * Run: docker compose up db -d   (before running integration tests)
+ *
+ * <p>If port 5432 is already taken on the developer machine, point the tests at a
+ * different instance via {@code -Pmegarepo.it.db.url=jdbc:postgresql://localhost:55432/megarepo?stringtype=unspecified}
+ * (forwarded to the test JVM as a system property).
  */
 @SpringBootTest(
         classes = MegaRepoApplication.class,
@@ -28,7 +32,9 @@ public abstract class BaseIntegrationTest {
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url",
-                () -> "jdbc:postgresql://localhost:5432/megarepo?stringtype=unspecified");
+                () -> System.getProperty(
+                        "megarepo.it.db.url",
+                        "jdbc:postgresql://localhost:5432/megarepo?stringtype=unspecified"));
         registry.add("spring.datasource.username", () -> "megarepo");
         registry.add("spring.datasource.password", () -> "megarepo");
         registry.add("spring.flyway.clean-disabled", () -> "false");
