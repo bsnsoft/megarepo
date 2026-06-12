@@ -69,19 +69,48 @@ public class NugetPushHandler {
     }
 
     public FormatResponse handlePush(RepositoryConfig repo, HttpServletRequest request) {
-        byte[] body;
-        try {
-            body = request.getInputStream().readAllBytes();
-        } catch (IOException e) {
-            return new ErrorResponse(400, "Failed to read push payload: " + e.getMessage());
-        }
-
-        Optional<byte[]> nupkg = multipartExtractor.extract(request.getContentType(), body);
-        if (nupkg.isEmpty()) {
+        byte[] nupkg = readPackageBytes(request);
+        if (nupkg == null || nupkg.length == 0) {
             return new ErrorResponse(400, "Push request contains no package file");
         }
 
-        return storePackage(repo, nupkg.get(), request.getRemoteUser(), request.getRemoteAddr());
+        return storePackage(repo, nupkg, request.getRemoteUser(), request.getRemoteAddr());
+    }
+
+    /**
+     * Reads the package from the request. Multipart bodies may already have
+     * been parsed by the container/framework (which consumes the raw input
+     * stream), so the servlet Parts API is consulted first; if it is
+     * unavailable for the method/container combination, the raw body is
+     * parsed manually. Non-multipart bodies are taken verbatim.
+     */
+    private byte[] readPackageBytes(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        boolean multipart = contentType != null
+                && contentType.toLowerCase(java.util.Locale.ROOT).startsWith("multipart/");
+
+        if (multipart) {
+            try {
+                for (jakarta.servlet.http.Part part : request.getParts()) {
+                    if (part.getSize() > 0) {
+                        try (java.io.InputStream in = part.getInputStream()) {
+                            return in.readAllBytes();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Servlet Parts API unavailable for NuGet push ({}), parsing body manually",
+                        e.getMessage());
+            }
+        }
+
+        try {
+            byte[] body = request.getInputStream().readAllBytes();
+            return multipartExtractor.extract(contentType, body).orElse(null);
+        } catch (IOException e) {
+            log.warn("Failed to read NuGet push payload: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
