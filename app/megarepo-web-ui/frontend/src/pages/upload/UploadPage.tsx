@@ -98,6 +98,7 @@ export default function UploadPage() {
               {isMaven && <MavenUploadWidget key={selectedRepo} repo={selectedRepo} />}
               {format === 'pypi' && <PypiUploadWidget key={selectedRepo} repo={selectedRepo} />}
               {format === 'npm' && <NpmUploadWidget key={selectedRepo} repo={selectedRepo} />}
+              {format === 'nuget' && <NugetUploadWidget key={selectedRepo} repo={selectedRepo} />}
               {format === 'raw' && <RawUploadWidget key={selectedRepo} repo={selectedRepo} />}
               {format === 'docker' && <DockerUploadHint repo={selectedRepo} />}
               {!format && (
@@ -514,6 +515,53 @@ function NpmUploadWidget({ repo }: { repo: string }) {
       <UploadButton onClick={handleUpload} disabled={!file} uploading={uploading} />
       <CliHint>
         {`npm config set registry ${window.location.origin}/repository/${repo}/\nnpm publish`}
+      </CliHint>
+    </div>
+  );
+}
+
+// ── NuGet ──────────────────────────────────────────────────────────────
+
+function NugetUploadWidget({ repo }: { repo: string }) {
+  const { showToast } = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  async function handleUpload() {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    setUploading(true);
+    setProgress(0);
+    try {
+      await uploadComponent(repo, formData, setProgress);
+      showToast('success', `Uploaded ${file.name} to ${repo}`);
+      setFile(null);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <FileDropZone
+        file={file}
+        onFile={setFile}
+        disabled={uploading}
+        hint="NuGet package (.nupkg, created with dotnet pack)"
+        accept=".nupkg"
+      />
+      <p className="text-xs text-gray-500">
+        Package id and version are read from the <code className="font-mono bg-gray-100 text-gray-700 px-1 py-0.5 rounded">.nuspec</code> inside the package.
+      </p>
+      {uploading && <UploadProgress progress={progress} />}
+      <UploadButton onClick={handleUpload} disabled={!file} uploading={uploading} />
+      <CliHint>
+        {`dotnet nuget add source ${window.location.origin}/repository/${repo}/index.json \\\n  --name megarepo\n\n# push (the API key is your MegaRepo token):\ndotnet nuget push MyPackage.1.0.0.nupkg \\\n  --source megarepo --api-key <TOKEN>\n\n# restore:\ndotnet restore --source ${window.location.origin}/repository/${repo}/index.json`}
       </CliHint>
     </div>
   );

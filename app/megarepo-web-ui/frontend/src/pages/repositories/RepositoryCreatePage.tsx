@@ -11,6 +11,7 @@ const FORMATS: { value: RepositoryFormat; label: string; description: string }[]
   { value: 'maven2', label: 'Maven', description: 'Java / JVM artifacts' },
   { value: 'pypi', label: 'PyPI', description: 'Python packages' },
   { value: 'npm', label: 'npm', description: 'JavaScript packages' },
+  { value: 'nuget', label: 'NuGet', description: '.NET packages' },
   { value: 'raw', label: 'Raw', description: 'Generic file storage' },
 ];
 
@@ -73,6 +74,7 @@ export default function RepositoryCreatePage() {
         maven2: 'https://repo1.maven.org/maven2/',
         pypi: 'https://pypi.org/simple/',
         npm: 'https://registry.npmjs.org/',
+        nuget: 'https://api.nuget.org/v3/index.json',
         raw: '',
       };
       setRemoteUrl(defaults[format] || '');

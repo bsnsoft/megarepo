@@ -43,6 +43,19 @@ repositories:
     type: GROUP
     members: [pypi-proxy, pypi-hosted]
 
+  # NuGet
+  - name: nuget-proxy
+    format: nuget
+    type: PROXY
+    remoteUrl: https://api.nuget.org/v3/index.json
+  - name: nuget-hosted
+    format: nuget
+    type: HOSTED
+  - name: nuget-public
+    format: nuget
+    type: GROUP
+    members: [nuget-proxy, nuget-hosted]
+
   # Raw
   - name: raw-hosted
     format: raw
