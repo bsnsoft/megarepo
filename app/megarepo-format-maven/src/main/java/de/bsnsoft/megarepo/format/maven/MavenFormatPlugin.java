@@ -1,6 +1,7 @@
 package de.bsnsoft.megarepo.format.maven;
 
 import de.bsnsoft.megarepo.core.format.ComponentCoordinateExtractor;
+import de.bsnsoft.megarepo.core.format.ComponentUploadHandler;
 import de.bsnsoft.megarepo.core.format.FormatPlugin;
 import de.bsnsoft.megarepo.core.format.FormatRequestHandler;
 import de.bsnsoft.megarepo.core.format.FormatSearchContributor;
@@ -20,14 +21,17 @@ public class MavenFormatPlugin implements FormatPlugin {
     private final MavenRequestHandler requestHandler;
     private final MavenCoordinateExtractor coordinateExtractor;
     private final MavenSearchContributor searchContributor;
+    private final MavenUploadHandler uploadHandler;
 
     public MavenFormatPlugin(
             MavenRequestHandler requestHandler,
             MavenCoordinateExtractor coordinateExtractor,
-            MavenSearchContributor searchContributor) {
+            MavenSearchContributor searchContributor,
+            MavenUploadHandler uploadHandler) {
         this.requestHandler = requestHandler;
         this.coordinateExtractor = coordinateExtractor;
         this.searchContributor = searchContributor;
+        this.uploadHandler = uploadHandler;
     }
 
     @Override
@@ -74,6 +78,11 @@ public class MavenFormatPlugin implements FormatPlugin {
     @Override
     public Optional<FormatSearchContributor> getSearchContributor() {
         return Optional.of(searchContributor);
+    }
+
+    @Override
+    public Optional<ComponentUploadHandler> getComponentUploadHandler() {
+        return Optional.of(uploadHandler);
     }
 
     @Override

@@ -156,6 +156,34 @@ public class NpmPublishHandler {
             return new ErrorResponse(400, "Invalid base64 data for attachment: " + tarballFilename);
         }
 
+        return publishTarball(
+                repo, packageName, version, versionMetadata, tarballData,
+                request.getRemoteUser(), request.getRemoteAddr());
+    }
+
+    /**
+     * Stores a published npm package version from raw tarball bytes — the
+     * shared core of both `npm publish` (base64 attachment) and manual
+     * uploads (Web-UI / REST). Registry metadata needs no regeneration: it is
+     * built dynamically from components/assets on every metadata GET.
+     */
+    public FormatResponse publishTarball(
+            RepositoryConfig repo,
+            String packageName,
+            String version,
+            JsonNode versionMetadata,
+            byte[] tarballData,
+            String username,
+            String clientIp) {
+
+        String namespace = null;
+        String name = packageName;
+
+        if (scopeResolver.isScoped(packageName)) {
+            namespace = scopeResolver.getScope(packageName);
+            name = scopeResolver.getPackageName(packageName);
+        }
+
         // Store the tarball blob
         BlobStore blobStore = blobStoreManager.get(repo.blobStoreName());
         Map<String, String> headers = Map.of("Content-Type", "application/gzip");
@@ -207,8 +235,8 @@ public class NpmPublishHandler {
             asset.setSize(blob.properties().size());
             asset.setLastModified(now);
             asset.setUpdatedAt(now);
-            asset.setCreatedBy(request.getRemoteUser());
-            asset.setCreatedByIp(request.getRemoteAddr());
+            asset.setCreatedBy(username);
+            asset.setCreatedByIp(clientIp);
 
             Map<String, String> checksums = blob.properties().checksums();
             if (checksums != null) {

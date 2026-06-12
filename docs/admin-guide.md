@@ -427,6 +427,34 @@ Clients access repositories at their native protocol endpoints:
 | Raw | `http://megarepo:8080/repository/{name}/` |
 | Docker | `http://megarepo:8080/v2/` (uses `megarepo.docker.default-repository` config) |
 
+### Manual Uploads (Web UI / REST)
+
+Besides the format-native publish mechanisms (`mvn deploy`, `npm publish`, `twine upload`, raw `PUT`), artifacts can be uploaded manually into **hosted** repositories — via the **Upload** page in the Web UI or via `POST /api/v1/components/upload` (multipart/form-data, authenticated). Proxy and group repositories are read-only.
+
+| Format | Upload input | Notes |
+|---|---|---|
+| Maven | File(s) + groupId/artifactId/version, optional classifier/extension per file | Coordinates can alternatively be read from an uploaded `.pom`; a minimal POM can be generated (`generatePom=true`). `maven-metadata.xml` is regenerated automatically after upload. |
+| npm | Package tarball (`.tgz`, from `npm pack`) | Name/version are read from the embedded `package.json`; registry metadata is generated dynamically. |
+| PyPI | Distribution file (`.whl` / `.tar.gz`) + optional `name`/`version` | Name/version are derived from the standard distribution filename if omitted. |
+| Raw | File(s) + optional `directory` or `path` | Equivalent to a direct `PUT`. |
+| Docker | — | Not supported: images consist of manifests + layers and must be pushed via `docker push` (Registry V2 API). |
+
+```bash
+# Maven: upload a JAR with coordinates, generate a POM, regenerate metadata
+curl -X POST "http://localhost:8080/api/v1/components/upload?repository=maven-internal" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "groupId=com.example" -F "artifactId=my-lib" -F "version=1.0.0" \
+  -F "generatePom=true" \
+  -F "asset0=@my-lib-1.0.0.jar"
+
+# npm: upload a tarball created with `npm pack`
+curl -X POST "http://localhost:8080/api/v1/components/upload?repository=npm-internal" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@my-pkg-1.2.3.tgz"
+```
+
+Per-file attributes for Maven use the `<field>.<attribute>` convention, e.g. `-F "asset1=@my-lib-1.0.0-sources.jar" -F "asset1.classifier=sources" -F "asset1.extension=jar"`.
+
 ### Creating a Repository via API
 
 ```bash

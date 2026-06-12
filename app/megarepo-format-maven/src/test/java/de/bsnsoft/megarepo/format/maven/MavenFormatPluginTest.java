@@ -27,11 +27,14 @@ class MavenFormatPluginTest {
     @Mock
     private MavenSearchContributor searchContributor;
 
+    @Mock
+    private MavenUploadHandler uploadHandler;
+
     private MavenFormatPlugin plugin;
 
     @BeforeEach
     void setUp() {
-        plugin = new MavenFormatPlugin(requestHandler, coordinateExtractor, searchContributor);
+        plugin = new MavenFormatPlugin(requestHandler, coordinateExtractor, searchContributor, uploadHandler);
     }
 
     @Test

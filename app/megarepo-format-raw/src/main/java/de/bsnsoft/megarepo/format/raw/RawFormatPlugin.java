@@ -1,6 +1,7 @@
 package de.bsnsoft.megarepo.format.raw;
 
 import de.bsnsoft.megarepo.core.format.ComponentCoordinateExtractor;
+import de.bsnsoft.megarepo.core.format.ComponentUploadHandler;
 import de.bsnsoft.megarepo.core.format.FormatPlugin;
 import de.bsnsoft.megarepo.core.format.FormatRequestHandler;
 import de.bsnsoft.megarepo.core.format.FormatSearchContributor;
@@ -19,10 +20,15 @@ public class RawFormatPlugin implements FormatPlugin {
 
     private final RawRequestHandler requestHandler;
     private final RawCoordinateExtractor coordinateExtractor;
+    private final RawUploadHandler uploadHandler;
 
-    public RawFormatPlugin(RawRequestHandler requestHandler, RawCoordinateExtractor coordinateExtractor) {
+    public RawFormatPlugin(
+            RawRequestHandler requestHandler,
+            RawCoordinateExtractor coordinateExtractor,
+            RawUploadHandler uploadHandler) {
         this.requestHandler = requestHandler;
         this.coordinateExtractor = coordinateExtractor;
+        this.uploadHandler = uploadHandler;
     }
 
     @Override
@@ -58,6 +64,11 @@ public class RawFormatPlugin implements FormatPlugin {
     @Override
     public Optional<FormatSearchContributor> getSearchContributor() {
         return Optional.empty();
+    }
+
+    @Override
+    public Optional<ComponentUploadHandler> getComponentUploadHandler() {
+        return Optional.of(uploadHandler);
     }
 
     @Override

@@ -100,6 +100,34 @@ public class MavenRequestHandler implements FormatRequestHandler {
 
     @Override
     public FormatResponse handleHostedPut(RepositoryConfig repo, String path, HttpServletRequest request) {
+        try {
+            return putContent(
+                    repo,
+                    path,
+                    request.getInputStream(),
+                    request.getContentLengthLong(),
+                    determineContentType(request, path),
+                    request.getRemoteUser(),
+                    request.getRemoteAddr());
+        } catch (IOException e) {
+            return new ErrorResponse(500, "Failed to read upload: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Stores content at the given repository path with full Maven validation
+     * (layout policy, coordinate extraction, version policy) — the same logic
+     * a {@code mvn deploy} PUT goes through. Servlet-independent so the
+     * manual upload path ({@link MavenUploadHandler}) can reuse it.
+     */
+    public FormatResponse putContent(
+            RepositoryConfig repo,
+            String path,
+            InputStream content,
+            long contentLength,
+            String contentType,
+            String username,
+            String clientIp) {
         // Ignore checksum uploads - we compute checksums, don't store them
         if (checksumFileHandler.isChecksumPath(path)) {
             return new CreatedResponse(path, Map.of());
@@ -107,7 +135,7 @@ public class MavenRequestHandler implements FormatRequestHandler {
 
         // Skip validation for metadata files
         if (isMetadataPath(path)) {
-            return storeAsset(repo, path, request, null);
+            return storeAsset(repo, path, content, contentLength, contentType, username, clientIp, null);
         }
 
         // Validate layout
@@ -132,7 +160,7 @@ public class MavenRequestHandler implements FormatRequestHandler {
             return new ErrorResponse(400, e.getMessage());
         }
 
-        return storeAsset(repo, path, request, coords);
+        return storeAsset(repo, path, content, contentLength, contentType, username, clientIp, coords);
     }
 
     @Override
@@ -279,11 +307,15 @@ public class MavenRequestHandler implements FormatRequestHandler {
     }
 
     private FormatResponse storeAsset(
-            RepositoryConfig repo, String path, HttpServletRequest request, ComponentCoordinates coords) {
+            RepositoryConfig repo,
+            String path,
+            InputStream inputStream,
+            long contentLength,
+            String contentType,
+            String username,
+            String clientIp,
+            ComponentCoordinates coords) {
         try {
-            InputStream inputStream = request.getInputStream();
-            String contentType = determineContentType(request, path);
-
             ComponentEntity component = null;
             if (coords != null) {
                 component = findOrCreateComponent(repo, coords);
@@ -293,7 +325,6 @@ public class MavenRequestHandler implements FormatRequestHandler {
             Map<String, String> headers = Map.of("Content-Type", contentType);
             BlobRef blobRef;
 
-            long contentLength = request.getContentLengthLong();
             if (contentLength > 0) {
                 blobRef = blobStore.store(inputStream, contentLength, headers);
             } else {
@@ -325,8 +356,8 @@ public class MavenRequestHandler implements FormatRequestHandler {
                 asset.setSize(blob.properties().size());
                 asset.setLastModified(now);
                 asset.setUpdatedAt(now);
-                asset.setCreatedBy(request.getRemoteUser());
-                asset.setCreatedByIp(request.getRemoteAddr());
+                asset.setCreatedBy(username);
+                asset.setCreatedByIp(clientIp);
 
                 Map<String, String> checksums = blob.properties().checksums();
                 if (checksums != null) {

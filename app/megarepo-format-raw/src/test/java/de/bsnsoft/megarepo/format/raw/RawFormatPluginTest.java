@@ -22,6 +22,9 @@ class RawFormatPluginTest {
     @Mock
     private RawRequestHandler requestHandler;
 
+    @Mock
+    private RawUploadHandler uploadHandler;
+
     private RawCoordinateExtractor coordinateExtractor;
 
     private RawFormatPlugin plugin;
@@ -29,7 +32,7 @@ class RawFormatPluginTest {
     @BeforeEach
     void setUp() {
         coordinateExtractor = new RawCoordinateExtractor();
-        plugin = new RawFormatPlugin(requestHandler, coordinateExtractor);
+        plugin = new RawFormatPlugin(requestHandler, coordinateExtractor, uploadHandler);
     }
 
     @Test
