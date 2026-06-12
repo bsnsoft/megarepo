@@ -311,7 +311,7 @@ On first run (empty database), MegaRepo automatically creates:
 
 **Blob store:** `default` (file-based, at the configured `blob-stores.default-path`)
 
-**Repositories (15 total):**
+**Repositories (18 total):**
 
 | Name | Format | Type | Remote URL |
 |---|---|---|---|
@@ -325,6 +325,9 @@ On first run (empty database), MegaRepo automatically creates:
 | `pypi-hosted` | pypi | hosted | -- |
 | `pypi-proxy` | pypi | proxy | https://pypi.org/simple/ |
 | `pypi-public` | pypi | group | pypi-proxy, pypi-hosted |
+| `nuget-hosted` | nuget | hosted | -- |
+| `nuget-proxy` | nuget | proxy | https://api.nuget.org/v3/index.json |
+| `nuget-public` | nuget | group | nuget-proxy, nuget-hosted |
 | `raw-hosted` | raw | hosted | -- |
 | `docker-hosted` | docker | hosted | -- |
 | `docker-hub-proxy` | docker | proxy | https://registry-1.docker.io/ |
@@ -425,6 +428,7 @@ Clients access repositories at their native protocol endpoints:
 | Maven | `http://megarepo:8080/repository/{name}/` |
 | npm | `http://megarepo:8080/repository/{name}/` |
 | PyPI | `http://megarepo:8080/repository/{name}/` |
+| NuGet | `http://megarepo:8080/repository/{name}/index.json` (V3 service index) |
 | Raw | `http://megarepo:8080/repository/{name}/` |
 | Docker | `http://megarepo:8080/v2/` (uses `megarepo.docker.default-repository` config) |
 
@@ -437,6 +441,7 @@ Besides the format-native publish mechanisms (`mvn deploy`, `npm publish`, `twin
 | Maven | File(s) + groupId/artifactId/version, optional classifier/extension per file | Coordinates can alternatively be read from an uploaded `.pom`; a minimal POM can be generated (`generatePom=true`). `maven-metadata.xml` is regenerated automatically after upload. |
 | npm | Package tarball (`.tgz`, from `npm pack`) | Name/version are read from the embedded `package.json`; registry metadata is generated dynamically. |
 | PyPI | Distribution file (`.whl` / `.tar.gz`) + optional `name`/`version` | Name/version are derived from the standard distribution filename if omitted. |
+| NuGet | Package (`.nupkg`, from `dotnet pack`) | Id/version/metadata are read from the embedded `.nuspec`; service index, version lists, registrations and search are generated dynamically. |
 | Raw | File(s) + optional `directory` or `path` | Equivalent to a direct `PUT`. |
 | Docker | — | Not supported: images consist of manifests + layers and must be pushed via `docker push` (Registry V2 API). |
 
@@ -452,6 +457,11 @@ curl -X POST "http://localhost:8080/api/v1/components/upload?repository=maven-in
 curl -X POST "http://localhost:8080/api/v1/components/upload?repository=npm-internal" \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@my-pkg-1.2.3.tgz"
+
+# NuGet: upload a package created with `dotnet pack`
+curl -X POST "http://localhost:8080/api/v1/components/upload?repository=nuget-hosted" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@MyPackage.1.0.0.nupkg"
 ```
 
 Per-file attributes for Maven use the `<field>.<attribute>` convention, e.g. `-F "asset1=@my-lib-1.0.0-sources.jar" -F "asset1.classifier=sources" -F "asset1.extension=jar"`.
@@ -489,6 +499,44 @@ curl -X POST http://localhost:8080/api/v1/repositories \
     }
   }'
 ```
+
+### NuGet
+
+MegaRepo implements the **NuGet V3 protocol** (service index, flat container, registrations, search). The legacy V2/OData API is not provided — only the push endpoint uses the traditional `api/v2/package` path, as all NuGet clients do.
+
+**Register the source** (hosted, proxy, or group repository — the URL always points at the repository's `index.json`):
+
+```bash
+dotnet nuget add source http://megarepo:8080/repository/nuget-public/index.json \
+  --name megarepo
+```
+
+**API key = MegaRepo token.** `dotnet nuget push` authenticates via the `X-NuGet-ApiKey` header; MegaRepo accepts its standard JWT there (the same token used for `Authorization: Bearer`):
+
+```bash
+TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/security/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"deployer","password":"…"}' | jq -r '.accessToken')
+
+dotnet nuget push MyPackage.1.0.0.nupkg \
+  --source megarepo --api-key "$TOKEN"
+```
+
+Pushing an already existing version returns `409 Conflict` — NuGet versions are immutable. A version can be removed with `dotnet nuget delete MyPackage 1.0.0 --source megarepo --api-key "$TOKEN"` (this deletes the package version; MegaRepo does not keep unlisted-but-restorable versions).
+
+**Restore** works against the same source:
+
+```bash
+dotnet restore   # uses the configured source
+# or explicitly:
+dotnet restore --source http://megarepo:8080/repository/nuget-public/index.json
+```
+
+Notes:
+
+- All flat-container paths are **lowercase** (`v3-flatcontainer/{id}/{version}/…`), matching the dotnet client's URL construction. Mixed-case requests are tolerated and normalized.
+- Proxy repositories are configured with the upstream **service index URL** as remote URL (default `https://api.nuget.org/v3/index.json`). The upstream resource map is cached using the repository's metadata TTL; packages and version lists are cached like every other proxy format.
+- Group repositories serve their own service index and merge member version lists; package downloads are answered by the first member that has the package.
 
 ### Proxy Cache Behavior
 
