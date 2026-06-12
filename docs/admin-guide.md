@@ -159,10 +159,21 @@ megarepo:
   security:
     jwt:
       secret: change-me-in-production   # REQUIRED: random string, min 32 chars
-      access-token-expiry: 30m          # Access token lifetime
+      access-token-expiry: 12h          # UI session token lifetime (work-day friendly)
       refresh-token-expiry: 7d          # Refresh token lifetime
     default-admin-password: admin123    # Initial admin password (first run only)
 ```
+
+**UI sessions**: the web UI renews its token automatically every 15 minutes
+while it is open (sliding session), so an active session never expires
+mid-work; `access-token-expiry` is the maximum idle time before a new login
+is required. When a session does expire, the UI redirects to its own login
+screen — the `WWW-Authenticate: Basic` challenge (and with it the browser's
+native credentials popup) is only sent on the repository endpoints
+(`/repository/**`, `/v2/**`), where Maven, npm, pip and Docker clients need it.
+
+In the Helm chart both lifetimes are exposed as `auth.accessTokenExpiry` and
+`auth.refreshTokenExpiry`.
 
 ### Blob Store
 

@@ -73,6 +73,14 @@ spec:
               value: {{ join "," .Values.outboundProxy.nonProxyHosts | quote }}
             {{- end }}
             {{- end }}
+            {{- if (.Values.auth).accessTokenExpiry }}
+            - name: MEGAREPO_SECURITY_JWT_ACCESS_TOKEN_EXPIRY
+              value: {{ .Values.auth.accessTokenExpiry | quote }}
+            {{- end }}
+            {{- if (.Values.auth).refreshTokenExpiry }}
+            - name: MEGAREPO_SECURITY_JWT_REFRESH_TOKEN_EXPIRY
+              value: {{ .Values.auth.refreshTokenExpiry | quote }}
+            {{- end }}
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

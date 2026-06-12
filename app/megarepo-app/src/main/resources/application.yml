@@ -85,7 +85,10 @@ megarepo:
   security:
     jwt:
       secret: ${MEGAREPO_JWT_SECRET:change-me-in-production}
-      access-token-expiry: 30m
+      # Lifetime of a UI session token. 12h covers a full work day; the web UI
+      # additionally renews the token periodically while it is open (sliding
+      # session), so active users are never logged out mid-work.
+      access-token-expiry: 12h
       refresh-token-expiry: 7d
     default-admin-password: admin123
   proxy:

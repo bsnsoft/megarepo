@@ -83,6 +83,16 @@ outboundProxy:
   # Hosts/patterns that bypass the proxy ('*' wildcard supported).
   nonProxyHosts: []
 
+# Web-UI session / JWT settings. Maps to the megarepo.security.jwt.*
+# Spring properties via environment variables.
+auth:
+  # Lifetime of a UI session token (Spring duration format, e.g. 30m, 12h).
+  # The web UI renews the token periodically while open (sliding session).
+  # Leave empty to use the application default (12h).
+  accessTokenExpiry: ""
+  # Lifetime of refresh tokens (e.g. 7d). Leave empty for the default (7d).
+  refreshTokenExpiry: ""
+
 # Additional environment variables passed to the MegaRepo container.
 # Example:
 #   env:

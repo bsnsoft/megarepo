@@ -2,6 +2,7 @@ package de.bsnsoft.megarepo.security;
 
 import de.bsnsoft.megarepo.security.auth.AnonymousAccessFilter;
 import de.bsnsoft.megarepo.security.auth.JwtAuthenticationFilter;
+import de.bsnsoft.megarepo.security.auth.UiAuthenticationEntryPoint;
 import de.bsnsoft.megarepo.security.auth.ratelimit.LoginRateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,10 +14,19 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.www.BasicAuthenticationEntryPoint;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.web.firewall.StrictHttpFirewall;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestHeaderRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+
+import java.util.LinkedHashMap;
 
 @Configuration
 @EnableWebSecurity
@@ -30,6 +40,7 @@ public class SecurityConfig {
             LoginRateLimitFilter rateLimitFilter,
             AuthenticationProvider ldapAwareAuthenticationProvider)
             throws Exception {
+        AuthenticationEntryPoint entryPoint = authenticationEntryPoint();
         http.csrf(csrf -> csrf.ignoringRequestMatchers("/repository/**", "/api/**", "/v2/**"))
                 .headers(headers -> {
                     headers.contentTypeOptions(Customizer.withDefaults()); // X-Content-Type-Options: nosniff
@@ -88,8 +99,38 @@ public class SecurityConfig {
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(anonFilter, UsernamePasswordAuthenticationFilter.class)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .httpBasic(Customizer.withDefaults());
+                .httpBasic(basic -> basic.authenticationEntryPoint(entryPoint))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(entryPoint));
         return http.build();
+    }
+
+    /**
+     * Split 401 challenge behavior between browser (SPA) and tooling clients.
+     *
+     * <p>Web-UI requests (everything under {@code /api/v1/**} plus anything sent
+     * with {@code X-Requested-With: XMLHttpRequest}) get a plain 401 JSON response
+     * <b>without</b> a {@code WWW-Authenticate: Basic} header. Otherwise browsers
+     * would show their native Basic-Auth popup whenever a UI session token expires,
+     * instead of letting the SPA redirect to its own login screen (osTicket #117649).
+     *
+     * <p>All other endpoints — notably {@code /repository/**} (Maven, npm, pip)
+     * and {@code /v2/**} (Docker) — keep the standard Basic challenge, which
+     * tooling clients rely on to know they must send credentials.
+     */
+    private static AuthenticationEntryPoint authenticationEntryPoint() {
+        RequestMatcher uiRequestMatcher = new OrRequestMatcher(
+                PathPatternRequestMatcher.withDefaults().matcher("/api/v1/**"),
+                new RequestHeaderRequestMatcher("X-Requested-With", "XMLHttpRequest"));
+
+        BasicAuthenticationEntryPoint basicEntryPoint = new BasicAuthenticationEntryPoint();
+        basicEntryPoint.setRealmName("MegaRepo");
+
+        LinkedHashMap<RequestMatcher, AuthenticationEntryPoint> entryPoints = new LinkedHashMap<>();
+        entryPoints.put(uiRequestMatcher, new UiAuthenticationEntryPoint());
+
+        DelegatingAuthenticationEntryPoint entryPoint = new DelegatingAuthenticationEntryPoint(entryPoints);
+        entryPoint.setDefaultEntryPoint(basicEntryPoint);
+        return entryPoint;
     }
 
     @Bean
