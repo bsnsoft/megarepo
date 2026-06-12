@@ -13,6 +13,12 @@ spec:
     metadata:
       annotations:
         checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if eq (.Values.image.tag | toString) "latest" }}
+        # "latest" is mutable: without a spec change a `helm upgrade` would
+        # neither restart the pod nor re-pull the image. The revision bump
+        # forces a rollout on every upgrade (pullPolicy Always does the pull).
+        megarepo.bsnsoft.de/helm-revision: {{ .Release.Revision | quote }}
+        {{- end }}
       labels:
         {{- include "megarepo.labels" . | nindent 8 }}
     spec:

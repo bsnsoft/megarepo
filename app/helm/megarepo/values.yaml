@@ -5,8 +5,13 @@ replicaCount: 1
 
 image:
   repository: bsnsoft/megarepo
+  # Pin a concrete release tag (e.g. "0.10.0-beta-16-g99736bc08b") for
+  # reproducible deployments. With the mutable "latest" tag the chart adds a
+  # per-release rollout annotation so every `helm upgrade` restarts the pod,
+  # and pullPolicy must stay "Always" so the node re-pulls instead of reusing
+  # a stale cached image.
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 imagePullSecrets: []
 nameOverride: ""

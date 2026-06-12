@@ -78,7 +78,8 @@ Key values in `values.yaml`:
 | Value | Default | Description |
 |---|---|---|
 | `image.repository` | `bsnsoft/megarepo` | Container image |
-| `image.tag` | `latest` | Image tag |
+| `image.tag` | `latest` | Image tag — pin a release tag for reproducible deployments |
+| `image.pullPolicy` | `Always` | Keep `Always` when using the mutable `latest` tag |
 | `persistence.enabled` | `true` | Enable PVC for blob storage |
 | `persistence.size` | `20Gi` | Blob store PVC size |
 | `persistence.mountPath` | `/data` | Mount path inside container |
@@ -588,9 +589,30 @@ Flyway runs automatically on startup and applies any pending database migrations
 
 ### Kubernetes / Helm
 
+Recommended — pin the new release tag explicitly (tags are listed on
+[Docker Hub](https://hub.docker.com/r/bsnsoft/megarepo/tags)):
+
 ```bash
-helm upgrade megarepo ./helm/megarepo --set image.tag=<new-version>
+helm upgrade megarepo ./helm/megarepo --set image.tag=<new-version> --reuse-values
 ```
+
+When staying on the default `latest` tag, simply run `helm upgrade` again with
+your existing values: the chart stamps a per-release rollout annotation into
+the pod template, so the deployment restarts and (with the default
+`pullPolicy: Always`) pulls the newest image.
+
+> **Note:** Chart versions before 2026-06-12 used `pullPolicy: IfNotPresent`
+> and no rollout annotation. With those chart versions a `helm upgrade` on
+> `latest` changed nothing — the pod kept running, and even a manual restart
+> reused the node-cached old image. Update the chart from the repository
+> first; the next `helm upgrade` then rolls out correctly. Alternatively force
+> a one-off fresh pull with:
+>
+> ```bash
+> kubectl rollout restart deployment <release-name>-megarepo
+> ```
+>
+> (only effective once the pod spec carries `imagePullPolicy: Always`).
 
 ### Bare Metal
 

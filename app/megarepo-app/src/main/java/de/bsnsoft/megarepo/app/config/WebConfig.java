@@ -1,9 +1,12 @@
 package de.bsnsoft.megarepo.app.config;
 
+import java.time.Duration;
+
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.CacheControl;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -31,10 +34,17 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Serve static files from classpath:/static/
+        // Vite emits content-hashed filenames under /assets/ — safe to cache
+        // aggressively; a new build always references new URLs.
+        registry.addResourceHandler("/assets/**")
+                .addResourceLocations("classpath:/static/assets/")
+                .setCacheControl(CacheControl.maxAge(Duration.ofDays(365)).immutable());
+        // index.html (and other non-hashed files) must revalidate on every
+        // load, otherwise browsers keep serving a stale UI for up to the
+        // cache period after an upgrade (it references outdated asset hashes).
         registry.addResourceHandler("/**")
                 .addResourceLocations("classpath:/static/")
-                .setCachePeriod(3600);
+                .setCacheControl(CacheControl.noCache());
     }
 
     @Override
