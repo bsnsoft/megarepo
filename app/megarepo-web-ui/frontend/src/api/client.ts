@@ -71,8 +71,31 @@ function userFriendlyMessage(status: number, body: ApiErrorBody | null): string 
   }
 }
 
+/**
+ * Auth endpoints handle their own 401s (e.g. "wrong password" on the login
+ * form) — a global redirect would reload the page and swallow the error.
+ */
+function isAuthEndpoint(path: string): boolean {
+  return path.startsWith('/security/auth/');
+}
+
 class ApiClient {
   private token: string | null = localStorage.getItem('token');
+
+  /**
+   * Central 401 handling: clear the stale token and send the user to the
+   * login screen. Skipped for auth endpoints (login failures must surface in
+   * the form) and when already on the login page (avoid a reload loop).
+   */
+  private handleUnauthorized(path: string): void {
+    if (isAuthEndpoint(path)) {
+      return;
+    }
+    this.setToken(null);
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
+  }
 
   setToken(token: string | null): void {
     this.token = token;
@@ -90,6 +113,9 @@ class ApiClient {
   private headers(extra?: Record<string, string>): Record<string, string> {
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
+      // Marks the request as an AJAX call so the backend answers 401s without
+      // a WWW-Authenticate: Basic challenge (no native browser popup).
+      'X-Requested-With': 'XMLHttpRequest',
       ...extra,
     };
     if (this.token) {
@@ -113,9 +139,7 @@ class ApiClient {
     }
 
     if (res.status === 401) {
-      this.setToken(null);
-      window.location.href = '/login';
-      throw new ApiError(401, 'Session expired');
+      this.handleUnauthorized(path);
     }
 
     if (!res.ok) {
@@ -157,7 +181,10 @@ class ApiClient {
 
     let res: Response;
     try {
-      const headers: Record<string, string> = { 'Content-Type': contentType };
+      const headers: Record<string, string> = {
+        'Content-Type': contentType,
+        'X-Requested-With': 'XMLHttpRequest',
+      };
       if (this.token) {
         headers['Authorization'] = `Bearer ${this.token}`;
       }
@@ -171,9 +198,7 @@ class ApiClient {
     }
 
     if (res.status === 401) {
-      this.setToken(null);
-      window.location.href = '/login';
-      throw new ApiError(401, 'Session expired');
+      this.handleUnauthorized(path);
     }
 
     if (!res.ok) {

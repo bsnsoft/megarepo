@@ -233,7 +233,7 @@ MegaRepo is configured via `application.yml` or environment variables. Key prope
 | `megarepo.data-directory`                 | `./data`                   | Base path for all file storage       |
 | `megarepo.blob-stores.default-path`       | `./data/blobs/default`     | Default blob store file path         |
 | `megarepo.security.jwt.secret`            | (set via env var)          | JWT signing secret (change in prod!) |
-| `megarepo.security.jwt.access-token-expiry`  | `30m`                   | Access token lifetime                |
+| `megarepo.security.jwt.access-token-expiry`  | `12h`                   | UI session token lifetime            |
 | `megarepo.security.jwt.refresh-token-expiry` | `7d`                    | Refresh token lifetime               |
 | `megarepo.security.default-admin-password`| `admin123`                 | Initial admin password               |
 | `megarepo.proxy.connect-timeout`          | `30s`                      | Proxy repository connect timeout     |
