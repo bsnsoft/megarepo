@@ -289,7 +289,7 @@ export interface NvdWhitelistEntry {
 }
 
 /** Supported repository formats */
-export type RepositoryFormat = 'maven2' | 'pypi' | 'npm' | 'raw' | 'docker';
+export type RepositoryFormat = 'maven2' | 'pypi' | 'npm' | 'nuget' | 'raw' | 'docker';
 
 /** Supported repository types */
 export type RepositoryType = 'hosted' | 'proxy' | 'group';

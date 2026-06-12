@@ -17,8 +17,8 @@ type InputMode = 'preset' | 'file' | 'paste';
 
 const PRESETS: Record<string, { label: string; description: string; yaml: string }> = {
   default: {
-    label: 'Default (15 repos)',
-    description: 'Maven, npm, PyPI, Raw, and Docker repositories with proxy, hosted, and group configurations.',
+    label: 'Default (18 repos)',
+    description: 'Maven, npm, PyPI, NuGet, Raw, and Docker repositories with proxy, hosted, and group configurations.',
     yaml: `# MegaRepo Default Repository Setup
 repositories:
   # Maven
@@ -62,6 +62,19 @@ repositories:
     format: pypi
     type: GROUP
     members: [pypi-proxy, pypi-hosted]
+
+  # NuGet
+  - name: nuget-proxy
+    format: nuget
+    type: PROXY
+    remoteUrl: https://api.nuget.org/v3/index.json
+  - name: nuget-hosted
+    format: nuget
+    type: HOSTED
+  - name: nuget-public
+    format: nuget
+    type: GROUP
+    members: [nuget-proxy, nuget-hosted]
 
   # Raw
   - name: raw-hosted

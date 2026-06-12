@@ -21,6 +21,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String ACCESS_TOKEN_COOKIE = "access_token";
 
+    /**
+     * NuGet push API key header ({@code dotnet nuget push --api-key …}).
+     * The API key IS a MegaRepo JWT — same token model as npm's
+     * {@code Authorization: Bearer}, just delivered in the header the
+     * NuGet client uses.
+     */
+    private static final String NUGET_API_KEY_HEADER = "X-NuGet-ApiKey";
+
     private final JwtTokenProvider jwtTokenProvider;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
@@ -52,6 +60,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader(AUTHORIZATION_HEADER);
         if (header != null && header.startsWith(BEARER_PREFIX)) {
             return header.substring(BEARER_PREFIX.length());
+        }
+
+        String nugetApiKey = request.getHeader(NUGET_API_KEY_HEADER);
+        if (nugetApiKey != null && !nugetApiKey.isBlank()) {
+            return nugetApiKey.trim();
         }
 
         Cookie[] cookies = request.getCookies();

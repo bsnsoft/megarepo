@@ -310,12 +310,14 @@ export default function DashboardPage() {
 }
 
 function formatBadgeVariant(format: string): string {
-  const map: Record<string, string> = { maven2: 'primary', pypi: 'success', npm: 'danger', raw: 'info' };
+  const map: Record<string, string> = { maven2: 'primary', pypi: 'success', npm: 'danger', nuget: 'info', raw: 'info' };
   return map[format] || 'default';
 }
 
 function formatLabel(format: string): string {
-  return format === 'maven2' ? 'Maven' : format.charAt(0).toUpperCase() + format.slice(1);
+  if (format === 'maven2') return 'Maven';
+  if (format === 'nuget') return 'NuGet';
+  return format.charAt(0).toUpperCase() + format.slice(1);
 }
 
 function typeBadgeVariant(type: string): string {
