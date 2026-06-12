@@ -1,7 +1,6 @@
 package de.bsnsoft.megarepo.it;
 
 import de.bsnsoft.megarepo.app.MegaRepoApplication;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -10,6 +9,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -26,8 +28,22 @@ import java.nio.file.Path;
 @ActiveProfiles("test")
 public abstract class BaseIntegrationTest {
 
-    @TempDir
-    static Path tempDir;
+    /**
+     * Context-scoped working directory. Deliberately NOT a JUnit {@code @TempDir}:
+     * static temp dirs are deleted after each test <em>class</em>, while the Spring
+     * context (and its data/blob-store paths) is cached and shared across all
+     * integration-test classes — the health indicators would report DOWN for every
+     * class after the first one. Created once per JVM instead.
+     */
+    static final Path tempDir = createJvmScopedTempDir();
+
+    private static Path createJvmScopedTempDir() {
+        try {
+            return Files.createTempDirectory("megarepo-it");
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to create integration-test temp directory", e);
+        }
+    }
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -38,8 +54,19 @@ public abstract class BaseIntegrationTest {
         registry.add("spring.datasource.username", () -> "megarepo");
         registry.add("spring.datasource.password", () -> "megarepo");
         registry.add("spring.flyway.clean-disabled", () -> "false");
-        registry.add("megarepo.data-directory", () -> tempDir.resolve("data").toString());
-        registry.add("megarepo.blob-stores.default-path", () -> tempDir.resolve("blobs").toString());
+        // Create the directories up front — the disk-space and blob-store health
+        // indicators report DOWN (=> 503 on /actuator/health) when they are missing.
+        registry.add("megarepo.data-directory", () -> createdDirectory(tempDir.resolve("data")));
+        registry.add("megarepo.blob-stores.default-path", () -> createdDirectory(tempDir.resolve("blobs")));
+    }
+
+    private static String createdDirectory(Path path) {
+        try {
+            Files.createDirectories(path);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to create test directory " + path, e);
+        }
+        return path.toString();
     }
 
     @LocalServerPort
