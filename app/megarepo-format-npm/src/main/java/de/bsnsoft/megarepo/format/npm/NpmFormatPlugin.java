@@ -1,12 +1,14 @@
 package de.bsnsoft.megarepo.format.npm;
 
 import de.bsnsoft.megarepo.core.format.ComponentCoordinateExtractor;
+import de.bsnsoft.megarepo.core.format.ComponentUploadHandler;
 import de.bsnsoft.megarepo.core.format.FormatPlugin;
 import de.bsnsoft.megarepo.core.format.FormatRequestHandler;
 import de.bsnsoft.megarepo.core.format.FormatSearchContributor;
 import de.bsnsoft.megarepo.core.format.UploadDefinition;
 import de.bsnsoft.megarepo.core.format.UploadDefinition.UploadFieldDefinition;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
+import de.bsnsoft.megarepo.format.npm.upload.NpmUploadHandler;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -19,10 +21,15 @@ public class NpmFormatPlugin implements FormatPlugin {
 
     private final NpmRequestHandler requestHandler;
     private final NpmCoordinateExtractor coordinateExtractor;
+    private final NpmUploadHandler uploadHandler;
 
-    public NpmFormatPlugin(NpmRequestHandler requestHandler, NpmCoordinateExtractor coordinateExtractor) {
+    public NpmFormatPlugin(
+            NpmRequestHandler requestHandler,
+            NpmCoordinateExtractor coordinateExtractor,
+            NpmUploadHandler uploadHandler) {
         this.requestHandler = requestHandler;
         this.coordinateExtractor = coordinateExtractor;
+        this.uploadHandler = uploadHandler;
     }
 
     @Override
@@ -58,6 +65,11 @@ public class NpmFormatPlugin implements FormatPlugin {
     @Override
     public Optional<FormatSearchContributor> getSearchContributor() {
         return Optional.empty();
+    }
+
+    @Override
+    public Optional<ComponentUploadHandler> getComponentUploadHandler() {
+        return Optional.of(uploadHandler);
     }
 
     @Override

@@ -70,9 +70,32 @@ public class RawRequestHandler implements FormatRequestHandler {
     @Override
     public FormatResponse handleHostedPut(RepositoryConfig repo, String path, HttpServletRequest request) {
         try {
-            InputStream inputStream = request.getInputStream();
-            String contentType = determineContentType(request, path);
+            return putContent(
+                    repo,
+                    path,
+                    request.getInputStream(),
+                    request.getContentLengthLong(),
+                    determineContentType(request, path),
+                    request.getRemoteUser(),
+                    request.getRemoteAddr());
+        } catch (IOException e) {
+            return new ErrorResponse(500, "Failed to read upload: " + e.getMessage());
+        }
+    }
 
+    /**
+     * Stores content at the given repository path. Servlet-independent so the
+     * manual upload path ({@link RawUploadHandler}) can reuse it.
+     */
+    public FormatResponse putContent(
+            RepositoryConfig repo,
+            String path,
+            InputStream inputStream,
+            long contentLength,
+            String contentType,
+            String username,
+            String clientIp) {
+        try {
             Optional<ComponentCoordinates> coordinates = coordinateExtractor.extractFromPath(path);
             if (coordinates.isEmpty()) {
                 return new ErrorResponse(400, "Invalid path: " + path);
@@ -85,7 +108,6 @@ public class RawRequestHandler implements FormatRequestHandler {
             Map<String, String> headers = Map.of("Content-Type", contentType);
             BlobRef blobRef;
 
-            long contentLength = request.getContentLengthLong();
             if (contentLength > 0) {
                 blobRef = blobStore.store(inputStream, contentLength, headers);
             } else {
@@ -115,8 +137,8 @@ public class RawRequestHandler implements FormatRequestHandler {
                 asset.setSize(blob.properties().size());
                 asset.setLastModified(now);
                 asset.setUpdatedAt(now);
-                asset.setCreatedBy(request.getRemoteUser());
-                asset.setCreatedByIp(request.getRemoteAddr());
+                asset.setCreatedBy(username);
+                asset.setCreatedByIp(clientIp);
 
                 Map<String, String> checksums = blob.properties().checksums();
                 if (checksums != null) {

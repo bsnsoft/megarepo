@@ -22,6 +22,9 @@ class NpmFormatPluginTest {
     @Mock
     private NpmRequestHandler requestHandler;
 
+    @Mock
+    private de.bsnsoft.megarepo.format.npm.upload.NpmUploadHandler uploadHandler;
+
     private NpmCoordinateExtractor coordinateExtractor;
 
     private NpmFormatPlugin plugin;
@@ -29,7 +32,7 @@ class NpmFormatPluginTest {
     @BeforeEach
     void setUp() {
         coordinateExtractor = new NpmCoordinateExtractor();
-        plugin = new NpmFormatPlugin(requestHandler, coordinateExtractor);
+        plugin = new NpmFormatPlugin(requestHandler, coordinateExtractor, uploadHandler);
     }
 
     @Test

@@ -25,11 +25,14 @@ class PypiFormatPluginTest {
     @Mock
     private PypiCoordinateExtractor coordinateExtractor;
 
+    @Mock
+    private de.bsnsoft.megarepo.format.pypi.upload.PypiComponentUploadHandler uploadHandler;
+
     private PypiFormatPlugin plugin;
 
     @BeforeEach
     void setUp() {
-        plugin = new PypiFormatPlugin(requestHandler, coordinateExtractor);
+        plugin = new PypiFormatPlugin(requestHandler, coordinateExtractor, uploadHandler);
     }
 
     @Test

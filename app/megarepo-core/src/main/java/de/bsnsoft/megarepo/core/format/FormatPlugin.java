@@ -38,5 +38,15 @@ public interface FormatPlugin {
 
     UploadDefinition getUploadDefinition();
 
+    /**
+     * Handler for manual uploads (Web-UI / REST) into hosted repositories of
+     * this format. Default: empty — the format does not support manual
+     * uploads (e.g. Docker, where images must be pushed via the registry
+     * V2 API).
+     */
+    default Optional<ComponentUploadHandler> getComponentUploadHandler() {
+        return Optional.empty();
+    }
+
     void validateRepositoryConfig(RepositoryType type, Map<String, Object> attributes);
 }
