@@ -98,6 +98,11 @@ public class FirstRunSetup implements ApplicationRunner {
         createProxyRepo("pypi-proxy", "pypi", "https://pypi.org/simple/");
         createGroupRepo("pypi-public", "pypi", List.of("pypi-proxy", "pypi-hosted"));
 
+        // NuGet — the proxy remoteUrl is the upstream V3 service index itself
+        createHostedRepo("nuget-hosted", "nuget");
+        createProxyRepo("nuget-proxy", "nuget", "https://api.nuget.org/v3/index.json");
+        createGroupRepo("nuget-public", "nuget", List.of("nuget-proxy", "nuget-hosted"));
+
         // Raw
         createHostedRepo("raw-hosted", "raw");
 

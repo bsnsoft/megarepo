@@ -18,6 +18,7 @@ dependencies {
     runtimeOnly(project(":megarepo-format-maven"))
     runtimeOnly(project(":megarepo-format-pypi"))
     runtimeOnly(project(":megarepo-format-npm"))
+    runtimeOnly(project(":megarepo-format-nuget"))
     runtimeOnly(project(":megarepo-format-raw"))
     runtimeOnly(project(":megarepo-format-docker"))
 

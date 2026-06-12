@@ -14,6 +14,7 @@ include(
     "megarepo-format-maven",
     "megarepo-format-pypi",
     "megarepo-format-npm",
+    "megarepo-format-nuget",
     "megarepo-format-raw",
     "megarepo-format-docker",
     "megarepo-app",
