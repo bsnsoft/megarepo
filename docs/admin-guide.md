@@ -257,10 +257,11 @@ Notes:
   this property programmatically at startup so authenticated proxies also work
   for `https://` upstreams. If you set the property yourself (e.g. via
   `JAVA_TOOL_OPTIONS`), your value wins and is left untouched.
-- **Credentials are deployment-side by design.** Proxy credentials are *not*
-  configurable in the web UI or stored in the database — they stay in your
-  deployment configuration (env vars, Helm values, Kubernetes Secrets), where
-  your existing secret management applies.
+- **UI configuration takes precedence.** The values above are the
+  *deployment-side defaults*. An administrator can override them at runtime under
+  **System → HTTP** (see below); once saved, the UI configuration wins. If the UI
+  has never been used, the deployment-side configuration here remains
+  authoritative — so env-only installs are unaffected.
 - **Legacy JVM properties keep working.** With `enabled: false` (the default),
   behavior is unchanged: `JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=... -Dhttp.proxyPort=...
   -Dhttps.proxyHost=... -Dhttps.proxyPort=..."` is still honored. Note that this
@@ -271,6 +272,31 @@ Notes:
   never logged.
 - Per-repository HTTP proxy settings (repository attribute `proxy.httpProxy`)
   take precedence over the global outbound proxy for that repository.
+
+#### Configuring the proxy in the UI (System → HTTP)
+
+The outbound proxy can also be configured at runtime in the web UI under
+**System → HTTP** — useful when you cannot redeploy to change proxy settings, or
+when the proxy details are not known at deployment time.
+
+- Toggle **Route upstream traffic through a forward proxy**, then fill in
+  **Host**, **Port**, optional **Username/Password**, and optional
+  **Non-proxy hosts** (comma-separated, `*` wildcard supported).
+- **Save** applies the change **immediately** — no restart. The live upstream
+  HTTP client is rebuilt in place, so the next proxy-repository fetch uses the
+  new configuration.
+- **Precedence and fallback.** As soon as you save here, the UI configuration
+  takes precedence over `megarepo.outbound-proxy.*` (Helm/env). A badge on the
+  page shows whether the active configuration comes from the UI
+  (*Managed in UI*) or from the deployment-side defaults (*Using environment
+  defaults*). Installs that never touch this page keep using their env/Helm
+  configuration exactly as before.
+- **Password handling.** The proxy password is **write-only**: it is stored in
+  the database and never sent back to the browser. Leave the password field
+  blank when editing to keep the stored password unchanged; type a new value to
+  replace it. As with LDAP bind passwords and SSL key material, MegaRepo stores
+  this secret as a database column (there is no encryption-at-rest layer);
+  protect the database accordingly.
 
 ### TLS
 
@@ -516,11 +542,31 @@ dotnet nuget add source http://megarepo:8080/repository/nuget-public/index.json 
 ```bash
 TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/security/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"deployer","password":"…"}' | jq -r '.accessToken')
+  -d '{"username":"deployer","password":"…"}' | jq -r '.token')
 
 dotnet nuget push MyPackage.1.0.0.nupkg \
   --source megarepo --api-key "$TOKEN"
 ```
+
+**Getting and resetting the API key in the UI.** Each user's API key is simply
+their personal access token, so it is available without any API scripting on the
+**Account** page (top-right user menu → *Account* → *API Key*):
+
+- **Access** — the current API key is shown there (masked by default; use
+  *Show* / *Copy*). Paste it as the `--api-key` value for `dotnet nuget push`,
+  or as the bearer token / password for npm and Maven.
+- **Reset** — *Reset API key* issues a fresh token for the account
+  (`POST /api/v1/security/auth/regenerate-token`). Use this if a key may have
+  leaked or as part of routine rotation; update any tooling that used the old
+  key afterwards.
+
+> **Note on revocation.** API keys are stateless JWTs, so a reset does **not**
+> immediately invalidate the previous key — the old token keeps working until it
+> expires (`megarepo.security.jwt.access-token-expiry`, default 12h). For
+> true immediate revocation, lock or disable the user account, or rotate
+> `megarepo.security.jwt.secret` (which invalidates *all* issued tokens). A
+> persistent, individually revocable personal-access-token model is planned; see
+> the changelog.
 
 Pushing an already existing version returns `409 Conflict` — NuGet versions are immutable. A version can be removed with `dotnet nuget delete MyPackage 1.0.0 --source megarepo --api-key "$TOKEN"` (this deletes the package version; MegaRepo does not keep unlisted-but-restorable versions).
 

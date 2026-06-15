@@ -29,7 +29,13 @@ public class RemoteHttpClient {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteHttpClient.class);
 
-    private final HttpClient defaultHttpClient;
+    /**
+     * The client used for all upstream fetches. Rebuilt in place when the runtime
+     * outbound-proxy configuration changes (see {@link #applyRuntimeConfig}), so a
+     * UI proxy change takes effect without an application restart. Marked
+     * {@code volatile} for safe publication across request threads.
+     */
+    private volatile HttpClient defaultHttpClient;
     private final String userAgent;
     private final Duration connectTimeout;
     private final Duration readTimeout;
@@ -52,6 +58,21 @@ public class RemoteHttpClient {
         this.readTimeout = readTimeout;
         this.retryOnTimeout = retryOnTimeout;
         this.defaultHttpClient = buildDefaultClient(connectTimeout, outboundProxy);
+    }
+
+    /**
+     * Replaces the default upstream client with one built from the given (effective)
+     * outbound-proxy configuration, taking effect immediately for subsequent fetches.
+     *
+     * <p>Called by the runtime configuration layer (UI {@code System → HTTP}) when the
+     * persisted proxy settings change, and once at startup once the persisted settings
+     * are resolved. When the UI has not been configured, the effective configuration is
+     * the deployment-side fallback, so behavior is identical to a fresh boot.
+     *
+     * @param effective the effective outbound-proxy configuration to apply
+     */
+    public void applyRuntimeConfig(OutboundProxyProperties effective) {
+        this.defaultHttpClient = buildDefaultClient(connectTimeout, effective);
     }
 
     /**

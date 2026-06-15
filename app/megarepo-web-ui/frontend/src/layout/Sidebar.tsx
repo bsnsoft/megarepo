@@ -41,6 +41,7 @@ const adminSections: SidebarSection[] = [
     children: [
       { to: '/admin/status', icon: 'activity', label: 'Status' },
       { to: '/admin/tasks', icon: 'clock', label: 'Tasks' },
+      { to: '/admin/http-proxy', icon: 'globe', label: 'HTTP' },
       { to: '/admin/audit', icon: 'file-text', label: 'Audit Log' },
       { to: '/admin/license', icon: 'key', label: 'License' },
     ],
@@ -66,6 +67,7 @@ function SidebarIcon({ name }: { name: string }) {
     'file-text': 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     'shuffle': 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
     'key': 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z',
+    'globe': 'M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18M12 3a15 15 0 000 18',
     'shield-alert': 'M12 2l8.618 3.04A12.02 12.02 0 0121 9c0 5.591-3.824 10.29-9 11.622C6.824 19.29 3 14.591 3 9c0-1.042.133-2.052.382-3.016L12 2zM12 8v4m0 4h.01',
     'user': 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
     'sign-out': 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',

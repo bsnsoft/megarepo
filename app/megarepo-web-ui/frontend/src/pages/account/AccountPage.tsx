@@ -5,7 +5,7 @@ import { useToast } from '../../components/Toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ErrorState from '../../components/ErrorState';
 import Badge from '../../components/Badge';
-import type { ApiUser } from '../../types/api';
+import type { ApiUser, TokenResponse } from '../../types/api';
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -63,6 +63,11 @@ export default function AccountPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+
+  // NuGet API key (= the MegaRepo access token)
+  const [apiKey, setApiKey] = useState<string | null>(() => api.getToken());
+  const [revealKey, setRevealKey] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   function loadProfile() {
     setLoading(true);
@@ -156,6 +161,44 @@ export default function AccountPage() {
     } finally {
       setSavingPassword(false);
     }
+  }
+
+  async function handleCopyKey() {
+    if (!apiKey) return;
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      showToast('success', 'API key copied to clipboard');
+    } catch {
+      showToast('error', 'Could not copy to clipboard');
+    }
+  }
+
+  async function handleRegenerateKey() {
+    const confirmed = window.confirm(
+      'Generate a new API key?\n\n' +
+        'Your current key keeps working until it expires; update any tooling ' +
+        '(NuGet, npm, Maven) that uses the old key.',
+    );
+    if (!confirmed) return;
+
+    setRegenerating(true);
+    try {
+      const res = await api.post<TokenResponse>('/security/auth/regenerate-token');
+      api.setToken(res.token); // keep the UI session on the fresh token
+      setApiKey(res.token);
+      setRevealKey(true);
+      showToast('success', 'New API key generated');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to regenerate API key';
+      showToast('error', message);
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  function maskedKey(key: string): string {
+    if (key.length <= 12) return '••••••••';
+    return `${key.slice(0, 6)}${'•'.repeat(24)}${key.slice(-4)}`;
   }
 
   if (loading) {
@@ -288,6 +331,70 @@ export default function AccountPage() {
                 disabled={savingPassword || !currentPassword || !newPassword || !confirmPassword}
               >
                 {savingPassword ? 'Changing...' : 'Change Password'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* API Key (NuGet / npm / Maven) */}
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+            <h2 className="text-sm font-semibold text-gray-700">API Key</h2>
+          </div>
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-gray-600">
+              Your API key is your personal access token. Use it as the{' '}
+              <span className="font-medium text-gray-800">NuGet API key</span>{' '}
+              (<code className="px-1 py-0.5 bg-gray-100 rounded text-[13px]">dotnet nuget push --api-key</code>),
+              and as the bearer token / password for npm and Maven. Treat it like a
+              password — anyone with this key can act as you.
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Current API key</label>
+              <div className="flex items-stretch gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={apiKey ? (revealKey ? apiKey : maskedKey(apiKey)) : 'Unavailable — please log in again'}
+                  style={{ ...inputStyle, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '13px' }}
+                  className="flex-1"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
+                  onClick={() => setRevealKey((v) => !v)}
+                  disabled={!apiKey}
+                >
+                  {revealKey ? 'Hide' : 'Show'}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
+                  onClick={handleCopyKey}
+                  disabled={!apiKey}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-[13px] text-amber-800">
+              Resetting issues a fresh key for this account. For security, tokens are
+              stateless: your <span className="font-medium">old key keeps working until it
+              expires</span>. After resetting, update any NuGet/npm/Maven configuration that
+              used the previous key.
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                className="inline-flex items-center px-4 py-2 bg-white border border-red-300 hover:bg-red-50 text-red-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleRegenerateKey}
+                disabled={regenerating}
+              >
+                {regenerating ? 'Resetting...' : 'Reset API key'}
               </button>
             </div>
           </div>

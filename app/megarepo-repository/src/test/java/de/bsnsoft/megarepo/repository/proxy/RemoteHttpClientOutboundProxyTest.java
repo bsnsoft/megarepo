@@ -147,6 +147,30 @@ class RemoteHttpClientOutboundProxyTest {
     }
 
     @Test
+    void applyRuntimeConfig_rebuildsDefaultClientFromNewConfig() throws Exception {
+        // Start disabled (deployment-side fallback with no proxy).
+        RemoteHttpClient client = newClient(OutboundProxyProperties.disabled());
+        assertTrue(defaultHttpClient(client).proxy().isEmpty());
+
+        // Apply a UI-managed runtime config -> the live client must now route through it.
+        var runtime = new OutboundProxyProperties(
+                true, "ui-proxy.example.com", 3128, "user", "secret", List.of());
+        client.applyRuntimeConfig(runtime);
+
+        HttpClient rebuilt = defaultHttpClient(client);
+        assertTrue(rebuilt.proxy().isPresent());
+        var address = (InetSocketAddress)
+                rebuilt.proxy().get().select(URI.create("https://repo1.maven.org/maven2/")).get(0).address();
+        assertEquals("ui-proxy.example.com", address.getHostString());
+        assertEquals(3128, address.getPort());
+        assertTrue(rebuilt.authenticator().isPresent());
+
+        // Applying a disabled config again must drop the explicit proxy.
+        client.applyRuntimeConfig(OutboundProxyProperties.disabled());
+        assertTrue(defaultHttpClient(client).proxy().isEmpty());
+    }
+
+    @Test
     void outboundProxySelector_reportsProxyAddressUnresolved() {
         // The proxy address must be created unresolved so DNS resolution happens
         // at connect time (the proxy host may not be resolvable at startup).

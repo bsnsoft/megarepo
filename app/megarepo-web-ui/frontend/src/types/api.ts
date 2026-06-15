@@ -251,6 +251,26 @@ export interface NvdFirewallSettings {
   cvssThreshold: number;
 }
 
+/**
+ * Runtime configuration of the global outbound (egress) HTTP proxy
+ * (System → HTTP). The `password` is write-only: it is never returned by the API
+ * (`passwordSet` tells whether one is stored); send a blank password on update to
+ * keep the stored one. `source` is read-only metadata: "database" when the
+ * UI-managed values are active, "environment" when the deployment-side
+ * (Helm/env) fallback applies.
+ */
+export interface OutboundProxySettings {
+  enabled: boolean;
+  host: string | null;
+  port: number;
+  username: string | null;
+  password: string | null;
+  passwordSet: boolean;
+  nonProxyHosts: string | null;
+  configured: boolean;
+  source: 'database' | 'environment';
+}
+
 export interface NvdSyncState {
   status: 'IDLE' | 'SYNCING' | 'ERROR';
   mode: 'FULL' | 'DELTA' | null;
