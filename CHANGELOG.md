@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- **NuGet API key in the UI (Account → API Key)** — the personal access token
+  that doubles as the `dotnet nuget push --api-key` value (and the npm/Maven
+  bearer token) is now surfaced on the Account page: view (masked, with
+  show/copy) and **Reset** to regenerate it
+  (`POST /api/v1/security/auth/regenerate-token`). Note: tokens are stateless
+  JWTs, so a reset does not retroactively invalidate the old key before it
+  expires — a persistent, individually revocable personal-access-token model is
+  planned. (osTicket #117649)
+- **Outbound proxy configurable in the UI (System → HTTP)** — the global forward
+  proxy (`enabled/host/port/username/password/non-proxy-hosts`) can now be set at
+  runtime in the web UI and takes effect immediately without a restart. The
+  deployment-side `megarepo.outbound-proxy.*` (Helm/env) configuration remains
+  the fallback and is used until the UI is configured. The proxy password is
+  write-only (never returned to the browser; blank on save keeps the stored
+  value). New table `outbound_proxy_settings` (migration `V10`). (osTicket
+  #117649)
+
+### Fixed
+- Admin guide: corrected the NuGet API-key login snippet to read the `token`
+  field (was `accessToken`).
+
 ## 0.8 (2026-03-29)
 
 ### Highlights

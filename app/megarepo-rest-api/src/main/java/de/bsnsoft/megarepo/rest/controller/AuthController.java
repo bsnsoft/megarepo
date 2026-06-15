@@ -11,6 +11,7 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -82,6 +83,38 @@ public class AuthController {
 
         String userId = jwtTokenProvider.getUserIdFromToken(token);
         Set<String> roles = jwtTokenProvider.getRolesFromToken(token);
+
+        String newToken = jwtTokenProvider.generateAccessToken(userId, roles);
+        return ResponseEntity.ok(new TokenResponse(newToken));
+    }
+
+    /**
+     * Regenerate the caller's API key — the same MegaRepo JWT used as the NuGet
+     * push API key ({@code dotnet nuget push --api-key …}) and as the npm/Maven
+     * bearer token. Issues a fresh token for the currently authenticated user and
+     * returns it so the UI can display and copy it.
+     *
+     * <p>This is reachable as an authenticated request (it relies on the security
+     * context, not a token in a header), which lets the UI offer an explicit
+     * "Reset API key" action distinct from the silent sliding-session
+     * {@code /refresh}.
+     *
+     * <p>Note: tokens are stateless JWTs, so the previous token remains valid until
+     * its natural expiry — there is no server-side revocation list. See the admin
+     * guide for the security implications and the planned persistent
+     * personal-access-token model.
+     */
+    @PostMapping("/regenerate-token")
+    public ResponseEntity<TokenResponse> regenerateToken() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new BadCredentialsException("Not authenticated");
+        }
+
+        String userId = authentication.getName();
+        Set<String> roles = authentication.getAuthorities().stream()
+                .map(auth -> auth.getAuthority().replace("ROLE_", ""))
+                .collect(Collectors.toSet());
 
         String newToken = jwtTokenProvider.generateAccessToken(userId, roles);
         return ResponseEntity.ok(new TokenResponse(newToken));

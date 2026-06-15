@@ -29,6 +29,7 @@ import AccountPage from './pages/account/AccountPage';
 import CachePage from './pages/cache/CachePage';
 import RoutingRulesPage from './pages/routing/RoutingRulesPage';
 import LicensePage from './pages/system/LicensePage';
+import HttpProxyPage from './pages/system/HttpProxyPage';
 
 export default function App() {
   return (
@@ -73,6 +74,7 @@ export default function App() {
               {/* Administration - System */}
               <Route path="/admin/status" element={<StatusPage />} />
               <Route path="/admin/tasks" element={<TasksPage />} />
+              <Route path="/admin/http-proxy" element={<HttpProxyPage />} />
               <Route path="/admin/audit" element={<AuditLogPage />} />
               <Route path="/admin/license" element={<LicensePage />} />
 

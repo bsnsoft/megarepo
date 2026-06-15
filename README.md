@@ -262,11 +262,13 @@ MEGAREPO_OUTBOUNDPROXY_NONPROXYHOSTS=localhost,*.internal.example.com
 ```
 
 The Helm chart exposes this as the `outboundProxy` block in `values.yaml`
-(with optional `existingSecret` for the password). Proxy credentials are
-deliberately deployment-side only — they are not configurable in the web UI
-and never stored in the database. See
+(with optional `existingSecret` for the password). These values are the
+deployment-side defaults; administrators can also configure the outbound proxy
+at runtime in the web UI under **System → HTTP**, which then takes precedence
+(the password is stored write-only and never returned to the browser). See
 [docs/admin-guide.md → Running Behind a Corporate Proxy](docs/admin-guide.md#running-behind-a-corporate-proxy)
-for details, including the legacy `JAVA_TOOL_OPTIONS` variant.
+for details, including the UI configuration and the legacy `JAVA_TOOL_OPTIONS`
+variant.
 
 ## Deployment
 
