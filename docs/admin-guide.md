@@ -550,11 +550,16 @@ dotnet nuget push MyPackage.1.0.0.nupkg \
 
 **Getting and resetting the API key in the UI.** Each user's API key is simply
 their personal access token, so it is available without any API scripting on the
-**Account** page (top-right user menu → *Account* → *API Key*):
+**Account** page (top-right user menu → *Account* → *NuGet API Key*):
 
-- **Access** — the current API key is shown there (masked by default; use
-  *Show* / *Copy*). Paste it as the `--api-key` value for `dotnet nuget push`,
-  or as the bearer token / password for npm and Maven.
+- **Access** — the key is hidden behind a password prompt (Sonatype-style):
+  enter your account password and click *Reveal key* before it is shown
+  (masked by default; then use *Show* / *Copy*, or *Lock* to hide it again).
+  Paste it as the `--api-key` value for `dotnet nuget push`, or as the bearer
+  token / password for npm and Maven. The password is re-checked server-side via
+  `POST /api/v1/security/users/me/verify-password`; LDAP-backed accounts have no
+  local password and cannot use this reveal flow (use the login API to mint a
+  token instead).
 - **Reset** — *Reset API key* issues a fresh token for the account
   (`POST /api/v1/security/auth/regenerate-token`). Use this if a key may have
   leaked or as part of routine rotation; update any tooling that used the old
