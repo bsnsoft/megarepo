@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Features
+- **Repository copy button copies the full URL** — the copy action on the
+  repositories list now puts the absolute URL (scheme + host +
+  `/repository/<name>`) on the clipboard instead of just the path. (osTicket
+  #558135)
+- **Delete components and assets from the UI** — the component detail page has
+  delete buttons (with confirmation) for the whole component and for individual
+  assets. The management API (`DELETE /api/v1/components/{id}`,
+  `DELETE /api/v1/assets/{id}`) now removes the backing blob(s) from storage as
+  well as the database rows, and component deletion cascades to its assets
+  (previously these leaked blobs / orphaned assets). (osTicket #558135)
+- **Password-gated NuGet API key reveal (Account → NuGet API Key)** — the key is
+  now hidden behind a password prompt (Sonatype-style); revealing it re-verifies
+  the password server-side (`POST /api/v1/security/users/me/verify-password`).
+  The key is a bearer token (sent as `X-NuGet-ApiKey` or `Authorization: Bearer`)
+  — now stated plainly in the UI and admin guide. (osTicket #558135)
+- **Legacy NuGet V2 (OData) read support for hosted repositories** — `$metadata`,
+  `FindPackagesById()`, `Packages(Id='…',Version='…')` and `Search()` are served
+  as OData/Atom XML so older clients (V2 sources, legacy nuget.exe) can list,
+  inspect and download packages. Content is shared with V3 (the Atom entries link
+  to the V3 flat-container download); push is unchanged. Hosted-only; the full
+  OData query grammar (`$filter`/`$orderby`/…) and V2 proxying are out of scope.
+  (osTicket #558135)
 - **NuGet API key in the UI (Account → API Key)** — the personal access token
   that doubles as the `dotnet nuget push --api-key` value (and the npm/Maven
   bearer token) is now surfaced on the Account page: view (masked, with

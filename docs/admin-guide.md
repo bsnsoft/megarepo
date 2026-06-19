@@ -589,6 +589,33 @@ Notes:
 - Proxy repositories are configured with the upstream **service index URL** as remote URL (default `https://api.nuget.org/v3/index.json`). The upstream resource map is cached using the repository's metadata TTL; packages and version lists are cached like every other proxy format.
 - Group repositories serve their own service index and merge member version lists; package downloads are answered by the first member that has the package.
 
+#### Legacy NuGet V2 (OData) clients
+
+Hosted NuGet repositories also expose the older **V2 (OData) read API**, for
+clients configured with a `.../api/v2`-style source or tools that still speak the
+OData/Atom protocol (older `nuget.exe`, some CI tasks, legacy Visual Studio
+package sources). Point such a client at the repository root
+(`http://megarepo:8080/repository/<nuget-hosted>`); the following endpoints are
+served as Atom/OData XML:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET $metadata` | OData EDMX schema for the `V2FeedPackage` entity |
+| `GET FindPackagesById()?id='X'` | all versions of package `X` (Atom feed) |
+| `GET Packages(Id='X',Version='Y')` | one package version (Atom entry) |
+| `GET Search()?searchTerm='X'` | search, latest version per id (Atom feed) |
+
+Package **content** is served by the same stored `.nupkg` as V3 — the V2 Atom
+entries link to the V3 flat-container download URL, so one upload serves both
+protocols. **Push is unchanged** (`PUT .../api/v2/package` with the API key /
+bearer token); V3 remains the primary, recommended protocol.
+
+Scope/limitations of the V2 layer: it is **hosted-only** (proxying a remote V2
+feed is not supported — use a V3 proxy upstream), and it implements the read
+functions clients actually call rather than the full OData query grammar
+(`$filter` / `$orderby` / `$top` / `$skip` are not interpreted). For new setups,
+prefer the V3 endpoints.
+
 ### Proxy Cache Behavior
 
 Proxy repositories cache remote artifacts locally. Cached artifacts are stored in the configured blob store. MegaRepo includes a scheduled task to purge negative cache entries every 15 minutes (configurable). The proxy connects with:

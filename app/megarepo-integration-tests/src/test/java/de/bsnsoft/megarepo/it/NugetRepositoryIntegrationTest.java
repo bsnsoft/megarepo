@@ -166,6 +166,50 @@ class NugetRepositoryIntegrationTest extends BaseIntegrationTest {
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
     }
 
+    /**
+     * End-to-end check that the legacy NuGet V2 (OData) read endpoints are
+     * reachable through the router + security firewall (the OData path/query
+     * characters {@code $ ( ) ' ,} must not be rejected) and return Atom XML for
+     * a package pushed via the shared push endpoint.
+     */
+    @Test
+    void v2ODataReadEndpoints() throws IOException {
+        push(buildNupkg("V2.Sample", "3.1.0"));
+
+        // $metadata — OData EDMX schema
+        ResponseEntity<String> metadata = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "$metadata"), String.class);
+        assertEquals(HttpStatus.OK, metadata.getStatusCode(), "body: " + metadata.getBody());
+        assertNotNull(metadata.getBody());
+        assertTrue(metadata.getBody().contains("edmx:Edmx"), metadata.getBody());
+
+        // FindPackagesById()?id='V2.Sample' — Atom feed with the version
+        ResponseEntity<String> find = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "FindPackagesById()") + "?id='V2.Sample'", String.class);
+        assertEquals(HttpStatus.OK, find.getStatusCode(), "body: " + find.getBody());
+        assertNotNull(find.getBody());
+        assertTrue(find.getBody().contains("<feed"), find.getBody());
+        assertTrue(find.getBody().contains("<d:Version>3.1.0</d:Version>"), find.getBody());
+        assertTrue(find.getBody().contains("v3-flatcontainer/v2.sample/3.1.0/v2.sample.3.1.0.nupkg"),
+                find.getBody());
+
+        // Packages(Id='V2.Sample',Version='3.1.0') — single Atom entry
+        ResponseEntity<String> entry = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "Packages(Id='V2.Sample',Version='3.1.0')"), String.class);
+        assertEquals(HttpStatus.OK, entry.getStatusCode(), "body: " + entry.getBody());
+        assertNotNull(entry.getBody());
+        assertTrue(entry.getBody().contains("<entry"), entry.getBody());
+        assertTrue(entry.getBody().contains("<d:Id>V2.Sample</d:Id>"), entry.getBody());
+
+        // Search()?searchTerm='v2.sample' — Atom feed
+        ResponseEntity<String> search = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "Search()") + "?searchTerm='v2.sample'", String.class);
+        assertEquals(HttpStatus.OK, search.getStatusCode(), "body: " + search.getBody());
+        assertNotNull(search.getBody());
+        assertTrue(search.getBody().contains("<feed"), search.getBody());
+        assertTrue(search.getBody().contains("V2.Sample"), search.getBody());
+    }
+
     private ResponseEntity<String> push(byte[] nupkg) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);

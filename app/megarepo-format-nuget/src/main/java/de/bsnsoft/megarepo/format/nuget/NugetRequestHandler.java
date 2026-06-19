@@ -26,6 +26,7 @@ import de.bsnsoft.megarepo.format.nuget.proxy.UpstreamServiceIndexResolver.Upstr
 import de.bsnsoft.megarepo.format.nuget.push.NugetPushHandler;
 import de.bsnsoft.megarepo.format.nuget.search.NugetSearchService;
 import de.bsnsoft.megarepo.format.nuget.index.ServiceIndexGenerator;
+import de.bsnsoft.megarepo.format.nuget.v2.NugetV2FeedGenerator;
 import de.bsnsoft.megarepo.repository.proxy.ProxyCacheChecker;
 import de.bsnsoft.megarepo.repository.proxy.ProxyFetchService;
 import de.bsnsoft.megarepo.repository.proxy.RemoteHttpClient;
@@ -92,6 +93,7 @@ public class NugetRequestHandler implements FormatRequestHandler {
     private final NugetPushHandler pushHandler;
     private final NugetCoordinateExtractor coordinateExtractor;
     private final NugetProxyUrlRewriter proxyUrlRewriter;
+    private final NugetV2FeedGenerator v2FeedGenerator;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired(required = false)
@@ -113,7 +115,8 @@ public class NugetRequestHandler implements FormatRequestHandler {
             NugetSearchService searchService,
             NugetPushHandler pushHandler,
             NugetCoordinateExtractor coordinateExtractor,
-            NugetProxyUrlRewriter proxyUrlRewriter) {
+            NugetProxyUrlRewriter proxyUrlRewriter,
+            NugetV2FeedGenerator v2FeedGenerator) {
         this.assetRepository = assetRepository;
         this.componentRepository = componentRepository;
         this.blobStoreManager = blobStoreManager;
@@ -124,6 +127,7 @@ public class NugetRequestHandler implements FormatRequestHandler {
         this.pushHandler = pushHandler;
         this.coordinateExtractor = coordinateExtractor;
         this.proxyUrlRewriter = proxyUrlRewriter;
+        this.v2FeedGenerator = v2FeedGenerator;
     }
 
     // ── Hosted ──────────────────────────────────────────────────────────
@@ -153,7 +157,101 @@ public class NugetRequestHandler implements FormatRequestHandler {
                     resolveBaseUrl(request));
         }
 
+        FormatResponse v2 = handleV2(repo, normalized, request);
+        if (v2 != null) {
+            return v2;
+        }
+
         return new NotFoundResponse("Not found: " + path);
+    }
+
+    // ── NuGet V2 (OData) read endpoints ─────────────────────────────────
+
+    private static final String V2_METADATA = "$metadata";
+    private static final String V2_FIND = "FindPackagesById";
+    private static final String V2_SEARCH = "Search";
+    private static final String V2_PACKAGES = "Packages";
+
+    /**
+     * Handle the legacy NuGet V2 (OData) read surface for hosted repositories.
+     * Returns {@code null} when the path is not a recognized V2 endpoint so the
+     * caller can fall through to its 404.
+     */
+    private FormatResponse handleV2(RepositoryConfig repo, String rawNormalized, HttpServletRequest request) {
+        // The router hands us the still-URL-encoded path. NuGet V2 clients may
+        // percent-encode the OData segments ($metadata, Packages(Id='…'…)); decode
+        // so the literal and encoded forms both match.
+        String normalized = urlDecode(rawNormalized);
+
+        if (normalized.equals(V2_METADATA)) {
+            return v2FeedGenerator.metadata();
+        }
+
+        // FindPackagesById() / FindPackagesById  (id from query string, OData-quoted)
+        if (normalized.equals(V2_FIND) || normalized.equals(V2_FIND + "()")) {
+            String id = odataParam(request, "id");
+            if (id == null || id.isBlank()) {
+                return new ErrorResponse(400, "FindPackagesById requires an 'id' parameter");
+            }
+            return v2FeedGenerator.findPackagesById(repo, id, resolveBaseUrl(request));
+        }
+
+        // Search()  (searchTerm from query string, OData-quoted)
+        if (normalized.equals(V2_SEARCH) || normalized.equals(V2_SEARCH + "()")) {
+            String term = odataParam(request, "searchTerm");
+            return v2FeedGenerator.search(repo, term, resolveBaseUrl(request));
+        }
+
+        // Packages(Id='X',Version='Y')  — id+version embedded in the path segment
+        if (normalized.startsWith(V2_PACKAGES + "(") && normalized.endsWith(")")) {
+            String inner = normalized.substring(V2_PACKAGES.length() + 1, normalized.length() - 1);
+            String id = odataKey(inner, "Id");
+            String version = odataKey(inner, "Version");
+            if (id == null || version == null) {
+                return new ErrorResponse(400, "Expected Packages(Id='…',Version='…')");
+            }
+            return v2FeedGenerator.packageEntry(repo, id, version, resolveBaseUrl(request));
+        }
+
+        return null;
+    }
+
+    /** Reads an OData function parameter, stripping the surrounding single quotes NuGet sends. */
+    private static String odataParam(HttpServletRequest request, String name) {
+        return unquote(request.getParameter(name));
+    }
+
+    /** Extracts a key like {@code Id='X'} from a {@code Packages(...)} argument list. */
+    private static String odataKey(String inner, String key) {
+        for (String part : inner.split(",")) {
+            String trimmed = part.trim();
+            if (trimmed.regionMatches(true, 0, key + "=", 0, key.length() + 1)) {
+                return unquote(trimmed.substring(key.length() + 1));
+            }
+        }
+        return null;
+    }
+
+    private static String unquote(String value) {
+        if (value == null) {
+            return null;
+        }
+        String v = value.trim();
+        if (v.length() >= 2 && v.startsWith("'") && v.endsWith("'")) {
+            return v.substring(1, v.length() - 1);
+        }
+        return v;
+    }
+
+    private static String urlDecode(String value) {
+        if (value == null || value.indexOf('%') < 0) {
+            return value;
+        }
+        try {
+            return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return value; // malformed encoding — match against the raw form
+        }
     }
 
     private FormatResponse handleHostedFlatContainer(RepositoryConfig repo, String normalized) {

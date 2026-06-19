@@ -87,7 +87,9 @@ class NugetRequestHandlerTest {
                         new de.bsnsoft.megarepo.format.nuget.meta.NupkgReader(),
                         new MultipartNupkgExtractor()),
                 new NugetCoordinateExtractor(),
-                new NugetProxyUrlRewriter());
+                new NugetProxyUrlRewriter(),
+                new de.bsnsoft.megarepo.format.nuget.v2.NugetV2FeedGenerator(
+                        componentRepository, assetRepository));
 
         lenient().when(request.getScheme()).thenReturn("http");
         lenient().when(request.getServerName()).thenReturn("localhost");
@@ -234,6 +236,90 @@ class NugetRequestHandlerTest {
 
         assertEquals(new String(plain), new String(NugetRequestHandler.gunzipIfNeeded(out.toByteArray())));
         assertEquals(new String(plain), new String(NugetRequestHandler.gunzipIfNeeded(plain)));
+    }
+
+    // ── NuGet V2 (OData) read endpoints ─────────────────────────────────
+
+    @Test
+    void v2_metadata_returnsEdmx() throws IOException {
+        FormatResponse response = handler.handleHostedGet(HOSTED, "$metadata", request);
+        ContentResponse content = assertInstanceOf(ContentResponse.class, response);
+        String xml = new String(content.content().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(content.contentType().contains("xml"), content.contentType());
+        assertTrue(xml.contains("edmx:Edmx"), xml);
+        assertTrue(xml.contains("FindPackagesById"), xml);
+    }
+
+    @Test
+    void v2_findPackagesById_returnsAtomFeedWithVersions() throws IOException {
+        var c1 = nugetComponent("my.pkg", "1.0.0");
+        var c2 = nugetComponent("my.pkg", "2.0.0");
+        when(componentRepository.findByRepositoryIdAndNamespaceAndName(REPO_ID, null, "my.pkg"))
+                .thenReturn(List.of(c2, c1));
+        lenient().when(assetRepository.findByRepositoryIdAndPath(eq(REPO_ID), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.empty());
+        when(request.getParameter("id")).thenReturn("'My.Pkg'");
+
+        FormatResponse response = handler.handleHostedGet(HOSTED, "FindPackagesById()", request);
+
+        ContentResponse content = assertInstanceOf(ContentResponse.class, response);
+        String xml = new String(content.content().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(content.contentType().contains("atom"), content.contentType());
+        assertTrue(xml.contains("<feed"), xml);
+        assertEquals(2, xml.split("<entry", -1).length - 1, "expected two <entry> elements:\n" + xml);
+        assertTrue(xml.contains("v3-flatcontainer/my.pkg/2.0.0/my.pkg.2.0.0.nupkg"), xml);
+    }
+
+    @Test
+    void v2_packagesEntry_returnsSingleEntry() throws IOException {
+        var c1 = nugetComponent("my.pkg", "1.0.0");
+        when(componentRepository.findByRepositoryIdAndNamespaceAndName(REPO_ID, null, "my.pkg"))
+                .thenReturn(List.of(c1));
+        lenient().when(assetRepository.findByRepositoryIdAndPath(eq(REPO_ID), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.empty());
+
+        FormatResponse response = handler.handleHostedGet(
+                HOSTED, "Packages(Id='My.Pkg',Version='1.0.0')", request);
+
+        ContentResponse content = assertInstanceOf(ContentResponse.class, response);
+        String xml = new String(content.content().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(content.contentType().contains("entry"), content.contentType());
+        assertTrue(xml.contains("<entry"), xml);
+        assertTrue(xml.contains("<d:Version>1.0.0</d:Version>"), xml);
+    }
+
+    @Test
+    void v2_packagesEntry_unknownVersion_returns404() {
+        when(componentRepository.findByRepositoryIdAndNamespaceAndName(REPO_ID, null, "my.pkg"))
+                .thenReturn(List.of(nugetComponent("my.pkg", "1.0.0")));
+
+        FormatResponse response = handler.handleHostedGet(
+                HOSTED, "Packages(Id='My.Pkg',Version='9.9.9')", request);
+
+        assertInstanceOf(NotFoundResponse.class, response);
+    }
+
+    @Test
+    void v2_findPackagesById_missingIdParam_returns400() {
+        when(request.getParameter("id")).thenReturn(null);
+        FormatResponse response = handler.handleHostedGet(HOSTED, "FindPackagesById()", request);
+        ErrorResponse error = assertInstanceOf(ErrorResponse.class, response);
+        assertEquals(400, error.statusCode());
+    }
+
+    private static de.bsnsoft.megarepo.database.entity.ComponentEntity nugetComponent(
+            String idLower, String version) {
+        var c = new de.bsnsoft.megarepo.database.entity.ComponentEntity();
+        c.setId(UUID.randomUUID());
+        c.setRepositoryId(REPO_ID);
+        c.setFormat("nuget");
+        c.setNamespace(null);
+        c.setName(idLower);
+        c.setVersion(version);
+        c.setCreatedAt(Instant.parse("2024-01-01T00:00:00Z"));
+        c.setAttributes(new java.util.HashMap<>(Map.of(
+                "originalId", "My.Pkg", "description", "desc", "authors", "me")));
+        return c;
     }
 
     private static RepositoryConfig proxyRepo() {
