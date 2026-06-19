@@ -20,7 +20,10 @@ function CopyButton({ text }: { text: string }) {
 
   function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
-    navigator.clipboard.writeText(text).then(
+    // Repository URLs are stored as server-relative paths ("/repository/<name>").
+    // Copy the absolute URL (scheme + host) so it is usable as-is in client tools.
+    const absolute = text.startsWith('/') ? `${window.location.origin}${text}` : text;
+    navigator.clipboard.writeText(absolute).then(
       () => showToast('success', 'URL copied to clipboard'),
       () => showToast('error', 'Failed to copy'),
     );
