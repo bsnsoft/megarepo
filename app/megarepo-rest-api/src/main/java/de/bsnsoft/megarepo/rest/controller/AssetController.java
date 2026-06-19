@@ -6,6 +6,7 @@ import de.bsnsoft.megarepo.database.entity.AssetEntity;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
 import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
+import de.bsnsoft.megarepo.repository.AssetService;
 import de.bsnsoft.megarepo.rest.dto.common.PageResponse;
 import de.bsnsoft.megarepo.rest.dto.component.AssetXO;
 import org.springframework.data.domain.PageRequest;
@@ -29,11 +30,15 @@ public class AssetController {
 
     private final AssetJpaRepository assetJpaRepository;
     private final RepositoryJpaRepository repositoryJpaRepository;
+    private final AssetService assetService;
 
     public AssetController(
-            AssetJpaRepository assetJpaRepository, RepositoryJpaRepository repositoryJpaRepository) {
+            AssetJpaRepository assetJpaRepository,
+            RepositoryJpaRepository repositoryJpaRepository,
+            AssetService assetService) {
         this.assetJpaRepository = assetJpaRepository;
         this.repositoryJpaRepository = repositoryJpaRepository;
+        this.assetService = assetService;
     }
 
     @GetMapping
@@ -71,10 +76,12 @@ public class AssetController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        if (!assetJpaRepository.existsById(id)) {
+        // deleteAsset removes the backing blob from storage as well as the DB row,
+        // keeping storage and database consistent (raw deleteById would leak the blob).
+        boolean deleted = assetService.deleteAsset(id);
+        if (!deleted) {
             throw new NotFoundException("Asset not found: " + id);
         }
-        assetJpaRepository.deleteById(id);
         return ResponseEntity.noContent().build();
     }
 

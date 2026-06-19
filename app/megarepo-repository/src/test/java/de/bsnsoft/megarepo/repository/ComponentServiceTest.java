@@ -1,7 +1,9 @@
 package de.bsnsoft.megarepo.repository;
 
 import de.bsnsoft.megarepo.core.format.ComponentCoordinates;
+import de.bsnsoft.megarepo.database.entity.AssetEntity;
 import de.bsnsoft.megarepo.database.entity.ComponentEntity;
+import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
 import de.bsnsoft.megarepo.database.repository.ComponentJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,15 +12,22 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,13 +39,20 @@ class ComponentServiceTest {
     private ComponentJpaRepository componentJpaRepository;
 
     @Mock
+    private AssetJpaRepository assetJpaRepository;
+
+    @Mock
+    private AssetService assetService;
+
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     private ComponentService service;
 
     @BeforeEach
     void setUp() {
-        service = new ComponentService(componentJpaRepository, eventPublisher);
+        service = new ComponentService(
+                componentJpaRepository, assetJpaRepository, assetService, eventPublisher);
     }
 
     @Test
@@ -105,5 +121,44 @@ class ComponentServiceTest {
         UUID id = UUID.randomUUID();
         service.delete(id);
         verify(componentJpaRepository).deleteById(id);
+    }
+
+    @Test
+    void deleteComponentWithAssets_deletesAllAssetsAndComponent() {
+        UUID componentId = UUID.randomUUID();
+        var component = new ComponentEntity();
+        component.setId(componentId);
+
+        AssetEntity a1 = new AssetEntity();
+        a1.setId(UUID.randomUUID());
+        AssetEntity a2 = new AssetEntity();
+        a2.setId(UUID.randomUUID());
+
+        when(componentJpaRepository.findById(componentId)).thenReturn(Optional.of(component));
+        // First page returns the two assets, second page is empty (loop terminates).
+        Page<AssetEntity> firstPage = new PageImpl<>(List.of(a1, a2));
+        Page<AssetEntity> emptyPage = new PageImpl<>(List.<AssetEntity>of());
+        when(assetJpaRepository.findByComponentId(eq(componentId), any(Pageable.class)))
+                .thenReturn(firstPage)
+                .thenReturn(emptyPage);
+
+        boolean result = service.deleteComponentWithAssets(componentId);
+
+        assertTrue(result);
+        verify(assetService).deleteAsset(a1.getId());
+        verify(assetService).deleteAsset(a2.getId());
+        verify(componentJpaRepository).deleteById(componentId);
+    }
+
+    @Test
+    void deleteComponentWithAssets_returnsFalseWhenMissing() {
+        UUID componentId = UUID.randomUUID();
+        when(componentJpaRepository.findById(componentId)).thenReturn(Optional.empty());
+
+        boolean result = service.deleteComponentWithAssets(componentId);
+
+        assertFalse(result);
+        verify(componentJpaRepository, never()).deleteById(any());
+        verify(assetService, never()).deleteAsset(any());
     }
 }

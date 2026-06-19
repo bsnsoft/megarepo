@@ -10,6 +10,7 @@ import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
 import de.bsnsoft.megarepo.database.repository.ComponentJpaRepository;
 import de.bsnsoft.megarepo.database.repository.GroupMemberJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
+import de.bsnsoft.megarepo.repository.ComponentService;
 import de.bsnsoft.megarepo.rest.dto.common.PageResponse;
 import de.bsnsoft.megarepo.rest.dto.component.AssetXO;
 import de.bsnsoft.megarepo.rest.dto.component.ComponentXO;
@@ -40,16 +41,19 @@ public class ComponentController {
     private final AssetJpaRepository assetJpaRepository;
     private final RepositoryJpaRepository repositoryJpaRepository;
     private final GroupMemberJpaRepository groupMemberJpaRepository;
+    private final ComponentService componentService;
 
     public ComponentController(
             ComponentJpaRepository componentJpaRepository,
             AssetJpaRepository assetJpaRepository,
             RepositoryJpaRepository repositoryJpaRepository,
-            GroupMemberJpaRepository groupMemberJpaRepository) {
+            GroupMemberJpaRepository groupMemberJpaRepository,
+            ComponentService componentService) {
         this.componentJpaRepository = componentJpaRepository;
         this.assetJpaRepository = assetJpaRepository;
         this.repositoryJpaRepository = repositoryJpaRepository;
         this.groupMemberJpaRepository = groupMemberJpaRepository;
+        this.componentService = componentService;
     }
 
     @GetMapping
@@ -130,10 +134,13 @@ public class ComponentController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        if (!componentJpaRepository.existsById(id)) {
+        // Deletes the component together with all of its assets and their blobs,
+        // keeping storage and database consistent (raw deleteById would orphan the
+        // component's assets and leak their blobs).
+        boolean deleted = componentService.deleteComponentWithAssets(id);
+        if (!deleted) {
             throw new NotFoundException("Component not found: " + id);
         }
-        componentJpaRepository.deleteById(id);
         return ResponseEntity.noContent().build();
     }
 

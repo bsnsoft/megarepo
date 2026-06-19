@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import FormatBadge from '../../components/FormatBadge';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import { useToast } from '../../components/Toast';
 import type { Component, Asset } from '../../types/api';
 
@@ -45,7 +46,7 @@ function ChecksumRow({ label, value }: { label: string; value: string | null }) 
   );
 }
 
-function AssetCard({ asset }: { asset: Asset }) {
+function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (asset: Asset) => void }) {
   const [expanded, setExpanded] = useState(false);
   const hasChecksums = asset.checksumMd5 || asset.checksumSha1 || asset.checksumSha256 || asset.checksumSha512;
 
@@ -100,6 +101,17 @@ function AssetCard({ asset }: { asset: Asset }) {
               Checksums
             </button>
           )}
+          <button
+            onClick={() => onDelete(asset)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-white border border-gray-200 hover:bg-red-50 rounded-md transition-colors"
+            title="Delete asset"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+            Delete
+          </button>
         </div>
       </div>
 
@@ -135,6 +147,20 @@ export default function ComponentDetailPage() {
 
   const [component, setComponent] = useState<Component | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deleteComponentOpen, setDeleteComponentOpen] = useState(false);
+  const [deleteAssetTarget, setDeleteAssetTarget] = useState<Asset | null>(null);
+  const [working, setWorking] = useState(false);
+
+  function reload() {
+    if (!componentId) return;
+    api
+      .get<Component>(`/components/${componentId}`)
+      .then(setComponent)
+      .catch(() => {
+        showToast('error', 'Failed to load component');
+        navigate(repositoryName ? `/browse/${encodeURIComponent(repositoryName)}` : '/browse');
+      });
+  }
 
   useEffect(() => {
     if (!componentId) return;
@@ -147,6 +173,38 @@ export default function ComponentDetailPage() {
       })
       .finally(() => setLoading(false));
   }, [componentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleDeleteComponent() {
+    if (!componentId) return;
+    setWorking(true);
+    api
+      .delete(`/components/${componentId}`)
+      .then(() => {
+        showToast('success', 'Component deleted');
+        navigate(`/browse/${encodeURIComponent(repositoryName || component?.repository || '')}`);
+      })
+      .catch(() => showToast('error', 'Failed to delete component'))
+      .finally(() => {
+        setWorking(false);
+        setDeleteComponentOpen(false);
+      });
+  }
+
+  function handleDeleteAsset() {
+    if (!deleteAssetTarget) return;
+    setWorking(true);
+    api
+      .delete(`/assets/${deleteAssetTarget.id}`)
+      .then(() => {
+        showToast('success', 'Asset deleted');
+        reload();
+      })
+      .catch(() => showToast('error', 'Failed to delete asset'))
+      .finally(() => {
+        setWorking(false);
+        setDeleteAssetTarget(null);
+      });
+  }
 
   if (loading) {
     return (
@@ -195,10 +253,23 @@ export default function ComponentDetailPage() {
             <span className="text-gray-900 font-medium">{component.name}</span>
           </nav>
         </div>
-        <h1 className="text-2xl font-semibold text-gray-950 ml-8">
-          {component.group ? `${component.group} / ` : ''}
-          {component.name}
-        </h1>
+        <div className="flex items-start justify-between gap-4 ml-8">
+          <h1 className="text-2xl font-semibold text-gray-950">
+            {component.group ? `${component.group} / ` : ''}
+            {component.name}
+          </h1>
+          <button
+            onClick={() => setDeleteComponentOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-sm font-medium rounded-md transition-colors shrink-0"
+            title="Delete component"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+            Delete component
+          </button>
+        </div>
       </div>
 
       {/* Component info card */}
@@ -242,10 +313,34 @@ export default function ComponentDetailPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {component.assets.map((asset) => (
-            <AssetCard key={asset.id} asset={asset} />
+            <AssetCard key={asset.id} asset={asset} onDelete={setDeleteAssetTarget} />
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteComponentOpen}
+        title="Delete Component"
+        message={`Are you sure you want to delete "${component.name}${
+          component.version ? ' ' + component.version : ''
+        }"? This permanently removes the component and all of its assets. This action cannot be undone.`}
+        confirmLabel={working ? 'Deleting...' : 'Delete'}
+        variant="danger"
+        onConfirm={handleDeleteComponent}
+        onCancel={() => setDeleteComponentOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deleteAssetTarget !== null}
+        title="Delete Asset"
+        message={`Are you sure you want to delete "${
+          deleteAssetTarget ? fileName(deleteAssetTarget.path) : ''
+        }"? This permanently removes the asset and its stored file. This action cannot be undone.`}
+        confirmLabel={working ? 'Deleting...' : 'Delete'}
+        variant="danger"
+        onConfirm={handleDeleteAsset}
+        onCancel={() => setDeleteAssetTarget(null)}
+      />
     </div>
   );
 }
