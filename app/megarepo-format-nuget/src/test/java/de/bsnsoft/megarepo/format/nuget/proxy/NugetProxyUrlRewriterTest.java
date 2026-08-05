@@ -14,7 +14,8 @@ class NugetProxyUrlRewriterTest {
     private static final UpstreamResources UPSTREAM = new UpstreamResources(
             "https://api.nuget.org/v3-flatcontainer",
             "https://api.nuget.org/v3/registration5-gz-semver2",
-            "https://azuresearch-usnc.nuget.org/query");
+            "https://azuresearch-usnc.nuget.org/query",
+            "https://azuresearch-usnc.nuget.org/autocomplete");
 
     private static final String REPO_BASE = "https://repo.example.com/repository/nuget-proxy";
 
@@ -49,7 +50,7 @@ class NugetProxyUrlRewriterTest {
 
     @Test
     void rewrite_handlesNullResourceBases() {
-        var upstream = new UpstreamResources("https://api.nuget.org/v3-flatcontainer", null, null);
+        var upstream = new UpstreamResources("https://api.nuget.org/v3-flatcontainer", null, null, null);
         String json = "{\"x\":\"https://api.nuget.org/v3-flatcontainer/a/1.0.0/a.1.0.0.nupkg\"}";
         String rewritten = rewriter.rewrite(json, upstream, REPO_BASE);
         assertTrue(rewritten.contains(REPO_BASE + "/v3-flatcontainer/a/1.0.0/a.1.0.0.nupkg"));
