@@ -32,6 +32,20 @@ import java.util.LinkedHashMap;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    /**
+     * Admin surface of the repository firewall, restricted to {@code nx-admin}.
+     *
+     * <p>Exposed as a constant so a controller under this prefix can assert that
+     * it really is covered by the rule. Renaming an endpoint out of this prefix
+     * would otherwise silently downgrade it to plain {@code authenticated()},
+     * which is the failure mode that produced {@code NvdFirewallController}
+     * having no authorization at all.
+     */
+    public static final String FIREWALL_ADMIN_PATH_PATTERN = "/api/v1/admin/firewall/**";
+
+    /** Role required for {@link #FIREWALL_ADMIN_PATH_PATTERN}, without the {@code ROLE_} prefix. */
+    public static final String FIREWALL_ADMIN_ROLE = "nx-admin";
+
     @Bean
     public SecurityFilterChain filterChain(
             HttpSecurity http,
@@ -73,6 +87,17 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/api/v1/status")
                         .permitAll()
+                        // The repository firewall's admin surface enumerates every
+                        // component in every repository together with the advisories
+                        // that match it — an inventory of what is worth attacking.
+                        // Authentication alone, the rule the rest of /api/v1/** gets,
+                        // is not enough for that; any logged-in reader would do.
+                        // Authorization in this project is expressed here rather than
+                        // with @PreAuthorize (method security is not enabled), so the
+                        // rule belongs in the chain. Role ids reach the security
+                        // context as ROLE_<id>, hence "nx-admin" from V2's seed.
+                        .requestMatchers(FIREWALL_ADMIN_PATH_PATTERN)
+                        .hasRole(FIREWALL_ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()
                         .requestMatchers("/actuator/**")

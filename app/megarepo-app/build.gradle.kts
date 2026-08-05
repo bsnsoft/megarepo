@@ -30,6 +30,15 @@ dependencies {
     runtimeOnly(libs.postgresql)
 
     testImplementation(libs.spring.boot.starter.test)
+    // The CPE/purl comparison report is proven here rather than in
+    // megarepo-repository, because it needs the per-format PurlMapper beans and
+    // those live in the format modules, which depend on megarepo-repository and
+    // cannot be depended on from it. They are runtimeOnly here, hence on this
+    // module's test runtime classpath exactly as in the shipped application.
+    // Both sides of the comparison are queries, so the proof needs the migrated
+    // schema rather than mocked repositories.
+    testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.testcontainers.junit.jupiter)
 }
 
 springBoot {

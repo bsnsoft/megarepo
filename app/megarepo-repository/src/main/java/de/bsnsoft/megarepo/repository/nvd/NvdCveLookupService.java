@@ -88,8 +88,12 @@ public class NvdCveLookupService {
      * - first segment before dash ("log4j" from "log4j-core")
      * - all segments joined with underscore ("log4j_core")
      * - lowercased variants
+     *
+     * <p>Visible beyond this package so that the CPE/purl comparison report can
+     * measure <em>this</em> candidate generation rather than a copy of it. The
+     * behaviour is unchanged.
      */
-    static Set<String> buildProductCandidates(String artifactName) {
+    public static Set<String> buildProductCandidates(String artifactName) {
         Set<String> out = new LinkedHashSet<>();
         addVariants(out, artifactName);
         addVariants(out, artifactName.toLowerCase());
@@ -112,7 +116,15 @@ public class NvdCveLookupService {
         out.add(s);
     }
 
-    static boolean versionApplies(CveAffectedProductEntity m, String version) {
+    /**
+     * Whether a CPE match covers the given version, using the generic
+     * {@link VersionComparator}.
+     *
+     * <p>Visible beyond this package for the same reason as
+     * {@link #buildProductCandidates(String)}: the comparison report has to
+     * apply the shipping predicate, not an equivalent one. Unchanged otherwise.
+     */
+    public static boolean versionApplies(CveAffectedProductEntity m, String version) {
         if (m.getVersionExact() != null) {
             return VersionComparator.compare(version, m.getVersionExact()) == 0;
         }

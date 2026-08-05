@@ -592,6 +592,45 @@ Proxy repositories cache remote artifacts locally. Cached artifacts are stored i
 - Read timeout: 30s (configurable via `megarepo.proxy.read-timeout`)
 - 1 retry on timeout (configurable via `megarepo.proxy.retry-on-timeout`)
 
+### Repository Firewall — CPE vs. purl comparison report
+
+Phase 1 of the repository firewall replaces CPE product-name guessing with purl
+identity. Before anything starts enforcing, the change can be measured against
+your own components: the report runs both matching methods over every component
+in the instance and lists where they disagree.
+
+It is **read-only** — it writes nothing, blocks nothing, and makes no network
+call; both methods answer from local tables. It is a full scan of `components`
+plus several indexed advisory queries per component, so run it deliberately
+rather than on a schedule.
+
+Requires the `nx-admin` role.
+
+```bash
+# human-readable
+curl -u admin -o report.md \
+  'https://megarepo.example.com/api/v1/admin/firewall/cpe-purl-comparison/markdown'
+
+# machine-readable
+curl -u admin -H 'Accept: application/json' -o report.json \
+  'https://megarepo.example.com/api/v1/admin/firewall/cpe-purl-comparison'
+```
+
+Optional query parameters (all have defaults; out-of-range values are clamped,
+not rejected):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `repositoryId` | all | Repeat to restrict the scan to specific repositories |
+| `pageSize` | 500 | Components compared per batch; each batch is one short read-only transaction |
+| `maxComponents` | 100000 | Hard stop; the report says when it truncated |
+| `maxSamplesPerKind` | 25 | Worked examples kept per case class — counts are always complete |
+| `includeAgreementSamples` | false | Also keep examples where both methods agree |
+
+Run it only after both the NVD sync and the advisory ingest have completed at
+least once. The report states the row counts of both stores before any of its
+own numbers, and refuses to draw a conclusion when one side is empty.
+
 ---
 
 ## 6. Backup & Restore
