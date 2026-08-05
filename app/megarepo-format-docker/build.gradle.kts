@@ -8,6 +8,7 @@ dependencies {
     implementation(project(":megarepo-repository"))
     implementation(project(":megarepo-storage"))
     implementation(project(":megarepo-database"))
+    implementation(libs.packageurl.java)
     implementation(project(":megarepo-security"))
     implementation(project(":megarepo-tasks"))
     implementation(libs.spring.boot.starter.web)
