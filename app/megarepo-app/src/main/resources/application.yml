@@ -108,6 +108,22 @@ megarepo:
     password: ""
     # Hosts/patterns that bypass the proxy, e.g. ["localhost", "*.internal.example.com"]
     non-proxy-hosts: []
+  firewall:
+    # GitHub Advisory (GHSA) source of the repository firewall.
+    #
+    # The token is optional and MegaRepo starts without it — but GitHub's anonymous
+    # limit of 60 requests/hour per IP cannot carry an advisory import, so without a
+    # token this one source disables itself (visible as "disabled:no-token" in
+    # advisory_sync_state.cursor) and makes no requests at all. NVD and OSV are
+    # unaffected. A classic PAT with no scopes is enough; the advisory database is
+    # public and the token only raises the rate limit.
+    ghsa:
+      enabled: true
+      token: ${MEGAREPO_GHSA_TOKEN:}
+      # Pages fetched per sync run before handing back a resumable cursor.
+      pages-per-sync: 5
+      # "reviewed" is GitHub's curated set; "malware" and "unreviewed" also exist.
+      type: reviewed
   docker:
     default-repository: docker-hosted
   license:

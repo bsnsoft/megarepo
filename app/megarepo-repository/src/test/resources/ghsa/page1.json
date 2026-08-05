@@ -1,0 +1,168 @@
+[
+  {
+    "ghsa_id": "GHSA-jfh8-c2jp-5v3q",
+    "cve_id": "CVE-2021-44228",
+    "url": "https://api.github.com/advisories/GHSA-jfh8-c2jp-5v3q",
+    "html_url": "https://github.com/advisories/GHSA-jfh8-c2jp-5v3q",
+    "summary": "Remote code injection in Log4j",
+    "description": "Log4j versions prior to 2.16.0 are subject to a remote code execution vulnerability via the ldap JNDI parser.",
+    "type": "reviewed",
+    "severity": "critical",
+    "source_code_location": "https://github.com/apache/logging-log4j2",
+    "identifiers": [
+      {"value": "GHSA-jfh8-c2jp-5v3q", "type": "GHSA"},
+      {"value": "CVE-2021-44228", "type": "CVE"}
+    ],
+    "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"],
+    "published_at": "2021-12-10T16:51:53Z",
+    "updated_at": "2024-02-05T21:53:12Z",
+    "github_reviewed_at": "2021-12-10T16:51:00Z",
+    "nvd_published_at": "2021-12-10T10:15:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "maven", "name": "org.apache.logging.log4j:log4j-core"},
+        "vulnerable_version_range": ">= 2.13.0, < 2.15.0",
+        "first_patched_version": "2.15.0",
+        "vulnerable_functions": []
+      },
+      {
+        "package": {"ecosystem": "maven", "name": "org.apache.logging.log4j:log4j-core"},
+        "vulnerable_version_range": ">= 2.0.1, < 2.12.2",
+        "first_patched_version": "2.12.2",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss": {
+      "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+      "score": 10.0
+    },
+    "cvss_severities": {
+      "cvss_v3": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", "score": 10.0},
+      "cvss_v4": {"vector_string": null, "score": null}
+    },
+    "cwes": [{"cwe_id": "CWE-502", "name": "Deserialization of Untrusted Data"}],
+    "credits": []
+  },
+  {
+    "ghsa_id": "GHSA-67hx-6x53-jw92",
+    "cve_id": "CVE-2023-45133",
+    "summary": "babel vulnerable to arbitrary code execution when compiling specifically crafted malicious code",
+    "type": "reviewed",
+    "severity": "critical",
+    "published_at": "2023-10-12T20:01:29Z",
+    "updated_at": "2023-11-08T05:03:33Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "npm", "name": "@babel/traverse"},
+        "vulnerable_version_range": "< 7.23.2",
+        "first_patched_version": "7.23.2"
+      },
+      {
+        "package": {"ecosystem": "npm", "name": "babel-traverse"},
+        "vulnerable_version_range": "<= 6.26.0",
+        "first_patched_version": null
+      }
+    ],
+    "cvss": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H", "score": 9.4}
+  },
+  {
+    "ghsa_id": "GHSA-rmr5-cpv2-vgjf",
+    "cve_id": "CVE-2024-1681",
+    "summary": "Flask-Cors log injection when the log level is set to debug",
+    "type": "reviewed",
+    "severity": "moderate",
+    "published_at": "2024-02-26T09:30:38Z",
+    "updated_at": "2024-05-14T15:31:06Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "pip", "name": "Flask_Cors"},
+        "vulnerable_version_range": ">= 1.0.0, <= 4.0.0",
+        "first_patched_version": null
+      }
+    ],
+    "cvss": {"vector_string": null, "score": null},
+    "cvss_severities": {
+      "cvss_v3": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N", "score": 5.3},
+      "cvss_v4": {"vector_string": null, "score": null}
+    }
+  },
+  {
+    "ghsa_id": "GHSA-5crp-9r3c-p9vr",
+    "cve_id": "CVE-2024-21907",
+    "summary": "Improper Handling of Exceptional Conditions in Newtonsoft.Json",
+    "type": "reviewed",
+    "severity": "high",
+    "published_at": "2024-01-16T21:30:29Z",
+    "updated_at": "2024-06-11T15:15:47Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "nuget", "name": "Newtonsoft.Json"},
+        "vulnerable_version_range": "< 13.0.1",
+        "first_patched_version": "13.0.1"
+      }
+    ],
+    "cvss": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", "score": 7.5}
+  },
+  {
+    "ghsa_id": "GHSA-m425-mq94-257g",
+    "cve_id": "CVE-2023-44487",
+    "summary": "HTTP/2 rapid reset attack in grpc-go",
+    "type": "reviewed",
+    "severity": "high",
+    "published_at": "2023-10-11T18:32:53Z",
+    "updated_at": "2023-11-03T21:32:11Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "go", "name": "google.golang.org/grpc"},
+        "vulnerable_version_range": "< 1.56.3",
+        "first_patched_version": "1.56.3"
+      },
+      {
+        "package": {"ecosystem": "rubygems", "name": "puma"},
+        "vulnerable_version_range": "< 6.4.1",
+        "first_patched_version": "6.4.1"
+      }
+    ],
+    "cvss": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", "score": 7.5}
+  },
+  {
+    "ghsa_id": "GHSA-0000-brok-en01",
+    "summary": "A curated entry whose affected packages are unusable",
+    "type": "reviewed",
+    "severity": "high",
+    "published_at": "2024-03-01T00:00:00Z",
+    "updated_at": "2024-03-01T00:00:00Z",
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "maven", "name": "log4j-core"},
+        "vulnerable_version_range": "< 2.15.0"
+      }
+    ],
+    "cvss": {"score": 8.1}
+  },
+  {
+    "cve_id": "CVE-2024-99999",
+    "summary": "An entry without a GHSA id — not addressable, must be skipped",
+    "severity": "critical",
+    "updated_at": "2024-03-02T00:00:00Z",
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "maven", "name": "com.acme:widget"},
+        "vulnerable_version_range": "< 1.0.0"
+      }
+    ]
+  },
+  {
+    "ghsa_id": "GHSA-0000-brok-en02",
+    "summary": "An entry whose vulnerabilities field has the wrong shape",
+    "severity": "low",
+    "updated_at": "2024-03-03T00:00:00Z",
+    "vulnerabilities": "not-an-array",
+    "cvss": {"score": 2.1}
+  }
+]

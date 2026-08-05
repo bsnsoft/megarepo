@@ -1,0 +1,20 @@
+[
+  {
+    "ghsa_id": "GHSA-4w2v-q235-vp99",
+    "cve_id": "CVE-2019-14540",
+    "summary": "Withdrawn: duplicate of GHSA-jfh8-c2jp-5v3q",
+    "type": "reviewed",
+    "severity": "high",
+    "published_at": "2024-04-01T08:00:00Z",
+    "updated_at": "2024-06-30T12:00:00Z",
+    "withdrawn_at": "2024-06-30T12:00:00Z",
+    "vulnerabilities": [
+      {
+        "package": {"ecosystem": "maven", "name": "com.fasterxml.jackson.core:jackson-databind"},
+        "vulnerable_version_range": ">= 2.0.0",
+        "first_patched_version": {"identifier": "2.9.10"}
+      }
+    ],
+    "cvss": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "score": 9.8}
+  }
+]
