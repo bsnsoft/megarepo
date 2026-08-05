@@ -11,6 +11,7 @@ guava = "33.4.8-jre"
 aws-sdk = "2.34.0"
 spotless = "7.0.2"
 maven-artifact = "3.9.16"
+packageurl = "1.5.0"
 
 [libraries]
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
@@ -39,6 +40,7 @@ testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter" }
 
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 maven-artifact = { module = "org.apache.maven:maven-artifact", version.ref = "maven-artifact" }
+packageurl-java = { module = "com.github.package-url:packageurl-java", version.ref = "packageurl" }
 commons-codec = { module = "commons-codec:commons-codec", version = "1.17.1" }
 jackson-dataformat-xml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-xml" }
 
