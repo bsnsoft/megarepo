@@ -124,6 +124,44 @@ megarepo:
       pages-per-sync: 5
       # "reviewed" is GitHub's curated set; "malware" and "unreviewed" also exist.
       type: reviewed
+    advisory:
+      sync:
+        # Deployment-level switch for the scheduled advisory sync
+        # (task type security.advisory.sync, seeded by V15 for 02:30 daily).
+        # The scheduled_tasks row's own "enabled" flag is the operator's switch;
+        # this one is the environment's. Nothing is imported at startup.
+        enabled: true
+    # Repository firewall, Phase 1 — AUDIT ONLY. NOTHING HERE BLOCKS A DOWNLOAD.
+    #
+    # The observation runs after the artifact has already been streamed to the
+    # client: it identifies the component (purl), asks the local advisory mirror
+    # which advisories name it, and writes what it found to firewall_violation.
+    # A repository set to QUARANTINE is treated exactly like AUDIT — enforcement
+    # is Phase 2, and the recorded rows say so (enforced=false).
+    audit:
+      enabled: true
+      # Mode for repositories with no firewall_repository_config row.
+      #
+      # OFF by default so that deploying this build changes nothing for an
+      # existing installation. Set to AUDIT to observe every repository, which
+      # is what a Phase 1 evaluation against real traffic wants; a single
+      # repository can be opted in instead by giving it a config row (whose own
+      # column default is AUDIT).
+      default-mode: OFF
+      # Size and backlog of the observation pool. When the backlog is full,
+      # observations are dropped and counted — downloads are never slowed down
+      # to keep the audit trail complete.
+      threads: 2
+      queue-capacity: 500
+      # An identical finding for the same component in the same repository is
+      # recorded at most once per window. A changed advisory set is recorded
+      # immediately regardless. Set to 0 to record every single observation.
+      suppression-window: 24h
+      # Per-node, in-memory shortcut: a path evaluated within this interval is
+      # not looked up again. Keeps a hot artifact from re-querying the advisory
+      # tables on every request.
+      reevaluation-interval: 10m
+      reevaluation-cache-size: 10000
   docker:
     default-repository: docker-hosted
   license:

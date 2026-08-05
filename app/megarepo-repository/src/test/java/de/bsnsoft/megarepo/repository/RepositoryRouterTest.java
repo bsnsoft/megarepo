@@ -7,6 +7,8 @@ import de.bsnsoft.megarepo.core.format.FormatResponse;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
+import de.bsnsoft.megarepo.repository.firewall.FirewallDownloadObserver;
+import de.bsnsoft.megarepo.repository.firewall.FirewallRequestContext;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
 import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.ServletOutputStream;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.Mockito;
@@ -32,6 +35,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -68,6 +73,9 @@ class RepositoryRouterTest {
     private NvdFirewallService nvdFirewallService;
 
     @Mock
+    private FirewallDownloadObserver firewallDownloadObserver;
+
+    @Mock
     private HttpServletRequest request;
 
     @Mock
@@ -79,7 +87,7 @@ class RepositoryRouterTest {
     void setUp() {
         Mockito.lenient().when(nvdFirewallService.checkDownload(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
                 .thenReturn(NvdFirewallService.CheckResult.allowed());
-        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster, nvdFirewallService);
+        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster, nvdFirewallService, firewallDownloadObserver);
     }
 
     @AfterEach
@@ -147,6 +155,88 @@ class RepositoryRouterTest {
         verify(response).setHeader("X-Checksum-Sha1", "abc123");
         verify(response).setHeader("X-Checksum-Md5", "def456");
         assertArrayEquals(data, outputBuffer.toByteArray());
+    }
+
+    @Test
+    void handleGet_contentResponse_notifiesFirewallObserverAfterServing() throws IOException {
+        var repo = new RepositoryConfig(
+                UUID.randomUUID(), "my-repo", "maven2", RepositoryType.HOSTED, true, "default", Map.of());
+        byte[] data = "file content".getBytes(StandardCharsets.UTF_8);
+        givenServedArtifact(repo, data, new ByteArrayOutputStream());
+
+        router.handleGet("my-repo", request, response);
+
+        var captor = ArgumentCaptor.forClass(FirewallRequestContext.class);
+        verify(firewallDownloadObserver)
+                .observeDownload(eq(repo.id()), eq("my-repo"), eq("com/example/artifact.jar"), captor.capture());
+        assertEquals("com/example/artifact.jar", captor.getValue().path());
+        assertEquals("GET", captor.getValue().method());
+    }
+
+    /**
+     * The Phase 1 promise, as a test: AUDIT records and serves anyway, and a
+     * firewall that is broken outright still cannot cost a client its artifact.
+     * The hook sits behind the completed response, so the bytes are already out
+     * by the time it runs — this asserts that the exception does not undo them.
+     */
+    @Test
+    void handleGet_firewallObserverThrows_downloadIsStillComplete() throws IOException {
+        var repo = new RepositoryConfig(
+                UUID.randomUUID(), "my-repo", "maven2", RepositoryType.HOSTED, true, "default", Map.of());
+        byte[] data = "file content".getBytes(StandardCharsets.UTF_8);
+        var outputBuffer = new ByteArrayOutputStream();
+        givenServedArtifact(repo, data, outputBuffer);
+        Mockito.doThrow(new RuntimeException("firewall is broken"))
+                .when(firewallDownloadObserver)
+                .observeDownload(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any());
+
+        assertDoesNotThrow(() -> router.handleGet("my-repo", request, response));
+
+        verify(response).setStatus(200);
+        assertArrayEquals(data, outputBuffer.toByteArray());
+    }
+
+    @Test
+    void handleGet_nvdFirewallBlocks_noFirewallObservation() throws IOException {
+        var repo = new RepositoryConfig(
+                UUID.randomUUID(), "my-repo", "maven2", RepositoryType.HOSTED, true, "default", Map.of());
+        byte[] data = "file content".getBytes(StandardCharsets.UTF_8);
+        var contentResponse = new FormatResponse.ContentResponse(
+                new ByteArrayInputStream(data), "application/java-archive", data.length, Map.of(), Map.of());
+
+        when(request.getRequestURI()).thenReturn("/repository/my-repo/com/example/artifact.jar");
+        when(repositoryConfigService.getRepository("my-repo")).thenReturn(Optional.of(repo));
+        when(formatRegistry.getPlugin("maven2")).thenReturn(formatPlugin);
+        when(formatPlugin.getRequestHandler()).thenReturn(formatRequestHandler);
+        when(formatRequestHandler.handleHostedGet(eq(repo), eq("com/example/artifact.jar"), eq(request)))
+                .thenReturn(contentResponse);
+        when(response.getWriter()).thenReturn(new java.io.PrintWriter(new java.io.StringWriter()));
+        when(nvdFirewallService.checkDownload(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(new NvdFirewallService.CheckResult(true, 10.0, java.util.List.of()));
+
+        router.handleGet("my-repo", request, response);
+
+        verify(response).setStatus(403);
+        verify(firewallDownloadObserver, never())
+                .observeDownload(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any());
+    }
+
+    private void givenServedArtifact(RepositoryConfig repo, byte[] data, ByteArrayOutputStream sink)
+            throws IOException {
+        var contentResponse = new FormatResponse.ContentResponse(
+                new ByteArrayInputStream(data),
+                "application/java-archive",
+                data.length,
+                Map.of(),
+                Map.of());
+        when(request.getRequestURI()).thenReturn("/repository/my-repo/com/example/artifact.jar");
+        when(request.getMethod()).thenReturn("GET");
+        when(repositoryConfigService.getRepository(repo.name())).thenReturn(Optional.of(repo));
+        when(formatRegistry.getPlugin("maven2")).thenReturn(formatPlugin);
+        when(formatPlugin.getRequestHandler()).thenReturn(formatRequestHandler);
+        when(formatRequestHandler.handleHostedGet(eq(repo), eq("com/example/artifact.jar"), eq(request)))
+                .thenReturn(contentResponse);
+        when(response.getOutputStream()).thenReturn(new TestServletOutputStream(sink));
     }
 
     @Test

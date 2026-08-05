@@ -13,6 +13,8 @@ import de.bsnsoft.megarepo.core.format.FormatResponse.RedirectResponse;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
+import de.bsnsoft.megarepo.repository.firewall.FirewallDownloadObserver;
+import de.bsnsoft.megarepo.repository.firewall.FirewallRequestContext;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
 import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,6 +51,7 @@ public class RepositoryRouter {
     private final AuditService auditService;
     private final ActivityBroadcaster activityBroadcaster;
     private final NvdFirewallService nvdFirewallService;
+    private final FirewallDownloadObserver firewallDownloadObserver;
 
     public RepositoryRouter(
             RepositoryConfigService repositoryConfigService,
@@ -56,13 +59,15 @@ public class RepositoryRouter {
             GroupHandler groupHandler,
             AuditService auditService,
             ActivityBroadcaster activityBroadcaster,
-            NvdFirewallService nvdFirewallService) {
+            NvdFirewallService nvdFirewallService,
+            FirewallDownloadObserver firewallDownloadObserver) {
         this.repositoryConfigService = repositoryConfigService;
         this.formatRegistry = formatRegistry;
         this.groupHandler = groupHandler;
         this.auditService = auditService;
         this.activityBroadcaster = activityBroadcaster;
         this.nvdFirewallService = nvdFirewallService;
+        this.firewallDownloadObserver = firewallDownloadObserver;
     }
 
     @RequestMapping(
@@ -107,6 +112,10 @@ public class RepositoryRouter {
                     };
         }
 
+        // The V8 NVD firewall still runs here, before the response is written,
+        // because it is the component that actually blocks. The Phase 1
+        // repository firewall deliberately does not join it at this point — see
+        // the observation hook after writeResponse below.
         if (formatResponse instanceof ContentResponse content) {
             String currentUser = currentUser(request);
             var nvdResult = nvdFirewallService.checkDownload(repo.id(), path, repoName, currentUser);
@@ -122,9 +131,35 @@ public class RepositoryRouter {
         if (formatResponse instanceof ContentResponse content) {
             long durationMs = System.currentTimeMillis() - startTime;
             String user = currentUser(request);
-            auditService.logDownload(user, repoName, path, repo.format(), content.contentLength(), clientIp(request), durationMs);
+            String ip = clientIp(request);
+            auditService.logDownload(user, repoName, path, repo.format(), content.contentLength(), ip, durationMs);
             activityBroadcaster.broadcast(new ActivityEvent(
                     Instant.now(), user, "DOWNLOAD", repoName, path, repo.format(), content.contentLength(), durationMs, null));
+
+            // Repository firewall, Phase 1 — AUDIT only (osTicket #155155).
+            //
+            // Placed here, after writeResponse, on purpose. The design moves the
+            // evaluation hook ahead of the upstream fetch, but only because
+            // Phase 2 has to be able to refuse; Phase 1 never refuses anything,
+            // and evaluating something it cannot act on before the fetch would
+            // put a database round trip on the critical path of every download
+            // in exchange for nothing. Sitting behind the completed response is
+            // also the strongest available guarantee that AUDIT "serves anyway":
+            // by the time this runs, the bytes are gone.
+            //
+            // The call is void, non-blocking and exception-free by contract. The
+            // catch is not redundancy for its own sake: "a firewall fault never
+            // costs a client its artifact" is the requirement, and a requirement
+            // that depends on a collaborator keeping a promise is one refactor
+            // away from being false.
+            try {
+                firewallDownloadObserver.observeDownload(
+                        repo.id(), repoName, path,
+                        new FirewallRequestContext(user, ip, path, request.getMethod()));
+            } catch (RuntimeException e) {
+                log.warn("Repository firewall observation failed for {}/{} — the download was served",
+                        repoName, path, e);
+            }
         }
     }
 

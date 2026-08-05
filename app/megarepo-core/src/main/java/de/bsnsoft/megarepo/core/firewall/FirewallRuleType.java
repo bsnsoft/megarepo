@@ -16,6 +16,25 @@ package de.bsnsoft.megarepo.core.firewall;
  */
 public enum FirewallRuleType {
 
+    /**
+     * Not a policy rule: the Phase 1 AUDIT observation that <em>some</em>
+     * advisory matches the component.
+     *
+     * <p>Phase 1 ships no policy engine, so nothing decides whether a finding is
+     * acceptable — the firewall only records that the component is named by one
+     * or more advisories, together with the source and confidence of each match.
+     * {@code firewall_violation.rule_type} is NOT NULL, and every other constant
+     * here claims a judgement that was never made: {@link #CVSS_THRESHOLD} would
+     * imply a threshold that does not exist, {@link #UNKNOWN_COMPONENT} the
+     * opposite finding. This constant says exactly what happened and no more.
+     *
+     * <p>Rows carrying it are observations, never enforcement decisions — their
+     * action is always {@link FirewallAction#WARN}. Phase 2 keeps writing them
+     * alongside the real rule types, so the audit trail from the observation
+     * phase stays distinguishable from enforced verdicts.
+     */
+    ADVISORY_MATCH,
+
     /** Component has an advisory at or above a CVSS score given in {@code config}. */
     CVSS_THRESHOLD,
 
