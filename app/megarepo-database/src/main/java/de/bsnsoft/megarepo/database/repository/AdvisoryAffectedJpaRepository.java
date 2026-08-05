@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,9 +39,33 @@ public interface AdvisoryAffectedJpaRepository extends JpaRepository<AdvisoryAff
                 : findByPurlTypeAndPurlNamespaceAndPurlName(purlType, purlNamespace, purlName);
     }
 
+    /**
+     * Request-path lookup for CPE-derived rows, backed by
+     * {@code idx_advisory_affected_purl_name} (V14).
+     *
+     * <p>Advisories that come from NVD are stored with the reserved purl type
+     * {@code cpe} because a CPE names no ecosystem and its vendor is an
+     * organisation rather than a purl namespace. They can therefore only be
+     * matched on the product name, which is why this query skips
+     * {@code purl_namespace} — and why it needs an index of its own rather than
+     * a prefix of {@code idx_advisory_affected_purl}.
+     */
+    List<AdvisoryAffectedEntity> findByPurlTypeAndPurlNameIn(
+            String purlType, Collection<String> purlNames);
+
     List<AdvisoryAffectedEntity> findByAdvisoryId(String advisoryId);
 
     @Modifying
     @Query("DELETE FROM AdvisoryAffectedEntity a WHERE a.advisoryId = :advisoryId")
     int deleteByAdvisoryId(@Param("advisoryId") String advisoryId);
+
+    /**
+     * Bulk variant used by the advisory ingest to make a re-sync idempotent:
+     * {@code advisory_affected} has a surrogate key and no natural unique
+     * constraint, so ranges are replaced per advisory rather than upserted.
+     * Mirrors {@code CveAffectedProductJpaRepository#deleteByCveIdIn}.
+     */
+    @Modifying
+    @Query("DELETE FROM AdvisoryAffectedEntity a WHERE a.advisoryId IN :advisoryIds")
+    int deleteByAdvisoryIdIn(@Param("advisoryIds") Collection<String> advisoryIds);
 }

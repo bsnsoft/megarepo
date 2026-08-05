@@ -15,6 +15,12 @@ public interface CveAffectedProductJpaRepository extends JpaRepository<CveAffect
 
     List<CveAffectedProductEntity> findByProductIn(Collection<String> products);
 
+    /**
+     * All CPE matches of a page of CVEs, so {@code NvdAdvisorySource} can
+     * normalise a whole batch with one query instead of one per CVE.
+     */
+    List<CveAffectedProductEntity> findByCveIdIn(Collection<String> cveIds);
+
     @Modifying
     @Query("DELETE FROM CveAffectedProductEntity p WHERE p.cveId = :cveId")
     int deleteByCveId(@Param("cveId") String cveId);

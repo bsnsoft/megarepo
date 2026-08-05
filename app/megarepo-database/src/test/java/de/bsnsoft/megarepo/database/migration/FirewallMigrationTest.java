@@ -173,6 +173,14 @@ class FirewallMigrationTest {
                     .contains("purl_namespace")
                     .contains("purl_name");
 
+            // V14: NVD's CPE-derived rows carry no usable namespace, so the
+            // lookup matches them on (purl_type, purl_name) and skips the middle
+            // column of the index above — which needs an index of its own.
+            assertThat(indexDefinition(connection, "idx_advisory_affected_purl_name"))
+                    .contains("purl_type")
+                    .contains("purl_name")
+                    .doesNotContain("purl_namespace");
+
             assertThat(indexDefinition(connection, "idx_firewall_policy_single_default"))
                     .as("single default policy is enforced by a partial unique index")
                     .contains("UNIQUE")

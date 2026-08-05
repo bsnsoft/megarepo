@@ -1,0 +1,22 @@
+-- Repository Firewall, Phase 1 — index for the CPE-derived advisory lookup.
+--
+-- V12 indexes advisory_affected on (purl_type, purl_namespace, purl_name),
+-- which serves the exact purl lookup: OSV and GHSA publish real purls, so all
+-- three columns are known at query time.
+--
+-- NVD does not. It identifies software by CPE (vendor:product), which names no
+-- ecosystem and whose vendor is an organisation rather than a purl namespace —
+-- `apache` is not `org.apache.logging.log4j`, and no rule derives one from the
+-- other. Those rows are therefore stored under the reserved purl type 'cpe'
+-- with the vendor kept for display only, and matched on the product name alone
+-- (see CpePurlTranslator). That query filters (purl_type, purl_name) and skips
+-- the middle column of the V12 index, so PostgreSQL would have to walk every
+-- 'cpe' entry in it. The NVD mirror contributes millions of CPE match rows and
+-- this lookup sits on the download request path, where the customer requires
+-- that no request ever waits on anything slow.
+--
+-- Nothing else in this migration: Phase 1 needs no advisory_alias table,
+-- because NormalizedAdvisory — the frozen ingest contract — carries no aliases
+-- field, so no source could fill one. See AdvisoryAliasResolver.
+CREATE INDEX idx_advisory_affected_purl_name
+    ON advisory_affected (purl_type, purl_name);
