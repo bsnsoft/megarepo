@@ -122,6 +122,23 @@ public class RemoteHttpClient {
     }
 
     /**
+     * The client every upstream fetch uses, reflecting the outbound-proxy configuration
+     * currently in effect (including a change made in the UI since startup).
+     *
+     * <p>For callers that need more of the HTTP response than {@link RemoteResponse}
+     * carries — the advisory sources read {@code X-RateLimit-*} and {@code Retry-After}
+     * headers to pace themselves. They must not build their own {@link HttpClient}:
+     * that would silently bypass {@code megarepo.outbound-proxy.*} and, on a customer
+     * network with no direct egress, fail in a way that looks like the feed being down.
+     *
+     * <p>Call this per request rather than caching the result, or a proxy change made
+     * after startup will not reach the caller.
+     */
+    public HttpClient upstreamHttpClient() {
+        return defaultHttpClient;
+    }
+
+    /**
      * Fetch a remote URL using the given HTTP proxy configuration.
      *
      * @param remoteUrl the URL to fetch
