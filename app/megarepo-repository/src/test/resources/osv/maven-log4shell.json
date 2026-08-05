@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-jfh8-c2jp-5v3q",
+  "modified": "2026-02-14T05:23:41Z",
+  "published": "2021-12-10T16:51:04Z",
+  "aliases": [
+    "CVE-2021-44228"
+  ],
+  "summary": "Remote code injection in Log4j",
+  "details": "Log4j versions prior to 2.16.0 are subject to a remote code execution vulnerability via the ldap JNDI parser.",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven",
+        "name": "org.apache.logging.log4j:log4j-core",
+        "purl": "pkg:maven/org.apache.logging.log4j/log4j-core"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "2.0-beta9"
+            },
+            {
+              "fixed": "2.3.1"
+            }
+          ]
+        },
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "2.4"
+            },
+            {
+              "fixed": "2.12.2"
+            }
+          ]
+        },
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "2.13.0"
+            },
+            {
+              "fixed": "2.15.0"
+            }
+          ]
+        }
+      ],
+      "database_specific": {
+        "last_known_affected_version_range": "<= 2.14.1"
+      }
+    }
+  ],
+  "references": [
+    {
+      "type": "ADVISORY",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
+    }
+  ],
+  "database_specific": {
+    "cwe_ids": [
+      "CWE-20",
+      "CWE-400",
+      "CWE-502"
+    ],
+    "severity": "CRITICAL",
+    "github_reviewed": true,
+    "github_reviewed_at": "2021-12-10T16:51:04Z",
+    "nvd_published_at": "2021-12-10T10:15:00Z"
+  }
+}

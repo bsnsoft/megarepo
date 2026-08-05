@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.6.0",
+  "id": "MAL-2024-7391",
+  "modified": "2026-03-02T05:12:41Z",
+  "published": "2024-04-18T00:23:17Z",
+  "summary": "Malicious code in @evilcorp/postinstall-helper (npm)",
+  "details": "Any computer that has this package installed or running should be considered fully compromised.\n\nThe package ships a postinstall script that reads process.env and posts it to a remote collector.",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "@evilcorp/postinstall-helper",
+        "purl": "pkg:npm/%40evilcorp/postinstall-helper"
+      }
+    }
+  ],
+  "credits": [
+    {
+      "name": "OpenSSF: Package Analysis",
+      "contact": [
+        "https://github.com/ossf/package-analysis"
+      ],
+      "type": "FINDER"
+    }
+  ],
+  "references": [
+    {
+      "type": "REPORT",
+      "url": "https://github.com/ossf/malicious-packages/blob/main/osv/malicious/npm/MAL-2024-7391.json"
+    }
+  ],
+  "database_specific": {
+    "malicious-packages-origins": [
+      {
+        "source": "ossf-package-analysis",
+        "import_time": "2024-04-18T00:23:17Z"
+      }
+    ]
+  }
+}
