@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -99,32 +100,28 @@ public class UpstreamServiceIndexResolver {
             root = objectMapper.readTree(body);
         }
 
-        String flatContainer = null;
-        String registrations = null;
-        String registrationsPreferred = null;
-        String search = null;
+        // The NuGet V3 protocol versions its resource types: "SearchQueryService",
+        // "SearchQueryService/3.0.0-beta" and "SearchQueryService/3.5.0" all denote
+        // the same resource in different protocol revisions, and a feed is free to
+        // publish only the versioned spellings. Group every entry by its base type
+        // (the part before the first slash) and pick one winner per base type.
+        Map<String, ResourceCandidate> byBaseType = new HashMap<>();
+        int order = 0;
 
         JsonNode resources = root.path("resources");
         for (JsonNode resource : resources) {
             String type = resource.path("@type").asText("");
             String id = resource.path("@id").asText("");
-            if (id.isEmpty()) {
+            if (id.isEmpty() || type.isEmpty()) {
                 continue;
             }
-            switch (type) {
-                case "PackageBaseAddress/3.0.0" -> flatContainer = id;
-                case "SearchQueryService" -> search = (search == null) ? id : search;
-                case "RegistrationsBaseUrl" -> registrations = (registrations == null) ? id : registrations;
-                // Prefer the semver2 registration hives so pre-release/semver2
-                // packages resolve; plain RegistrationsBaseUrl is semver1-only.
-                case "RegistrationsBaseUrl/3.6.0", "RegistrationsBaseUrl/Versioned" ->
-                        registrationsPreferred = id;
-                default -> { /* irrelevant resource */ }
-            }
+            ResourceCandidate candidate = ResourceCandidate.parse(type, id, order++);
+            byBaseType.merge(candidate.baseType(), candidate, ResourceCandidate::preferred);
         }
-        if (registrationsPreferred != null) {
-            registrations = registrationsPreferred;
-        }
+
+        String flatContainer = idOf(byBaseType.get("PackageBaseAddress"));
+        String registrations = idOf(byBaseType.get("RegistrationsBaseUrl"));
+        String search = idOf(byBaseType.get("SearchQueryService"));
 
         if (flatContainer == null) {
             log.warn("Upstream service index {} has no PackageBaseAddress resource", indexUrl);
@@ -161,6 +158,121 @@ public class UpstreamServiceIndexResolver {
             return ttl.intValue();
         }
         return DEFAULT_METADATA_TTL_MINUTES;
+    }
+
+    private static String idOf(ResourceCandidate candidate) {
+        return candidate != null ? candidate.id() : null;
+    }
+
+    /**
+     * One {@code resources[]} entry of a service index, split into its base
+     * {@code @type} and the optional variant suffix behind the first slash
+     * ({@code SearchQueryService/3.5.0} → base {@code SearchQueryService},
+     * suffix {@code 3.5.0}; {@code SearchQueryService} → suffix {@code ""}).
+     *
+     * @param order position in the {@code resources} array, used only to break
+     *              ties between otherwise equally ranked entries
+     */
+    record ResourceCandidate(String baseType, String suffix, String id, int order) {
+
+        /** Suffix ranks — higher wins. See {@link #preferred(ResourceCandidate)}. */
+        private static final int RANK_UNVERSIONED = 0;
+        private static final int RANK_VERSIONED = 1;
+        private static final int RANK_NAMED = 2;
+
+        static ResourceCandidate parse(String type, String id, int order) {
+            int slash = type.indexOf('/');
+            if (slash < 0) {
+                return new ResourceCandidate(type, "", id, order);
+            }
+            return new ResourceCandidate(
+                    type.substring(0, slash), type.substring(slash + 1), id, order);
+        }
+
+        /**
+         * Deterministic winner between two entries of the same base type. The
+         * order is independent of the position in the JSON document except for
+         * genuinely equal spellings:
+         *
+         * <ol>
+         *   <li>a named suffix ({@code RegistrationsBaseUrl/Versioned}) beats
+         *       everything — NuGet uses it for the newest hive of a resource,
+         *       and the previous implementation already treated it as the top
+         *       choice for registrations;</li>
+         *   <li>otherwise the highest numeric version wins
+         *       ({@code /3.6.0} &gt; {@code /3.4.0} &gt; {@code /3.0.0-beta}),
+         *       a pre-release losing against its own release;</li>
+         *   <li>an unversioned {@code @type} ranks lowest: it denotes the
+         *       oldest protocol revision (plain {@code RegistrationsBaseUrl}
+         *       is semver1-only), but it still resolves when it is the only
+         *       spelling the feed publishes;</li>
+         *   <li>on a full tie the entry listed first wins, which keeps the
+         *       "primary before secondary" convention of duplicated endpoints.</li>
+         * </ol>
+         */
+        ResourceCandidate preferred(ResourceCandidate other) {
+            int cmp = Integer.compare(rank(), other.rank());
+            if (cmp == 0 && rank() == RANK_VERSIONED) {
+                cmp = compareVersions(suffix, other.suffix);
+            } else if (cmp == 0 && rank() == RANK_NAMED) {
+                cmp = suffix.compareToIgnoreCase(other.suffix);
+            }
+            if (cmp != 0) {
+                return cmp > 0 ? this : other;
+            }
+            return order <= other.order ? this : other;
+        }
+
+        private int rank() {
+            if (suffix.isEmpty()) {
+                return RANK_UNVERSIONED;
+            }
+            return isNumericVersion(suffix) ? RANK_VERSIONED : RANK_NAMED;
+        }
+
+        /** {@code true} for {@code 3.6.0} and {@code 3.0.0-beta}, false for {@code Versioned}. */
+        private static boolean isNumericVersion(String suffix) {
+            for (String part : releasePart(suffix).split("\\.", -1)) {
+                // The length cap keeps segment() free of overflow surprises.
+                if (part.isEmpty() || part.length() > 9 || !part.chars().allMatch(Character::isDigit)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** Compares two numeric version suffixes; a pre-release sorts below its release. */
+        private static int compareVersions(String left, String right) {
+            String[] leftParts = releasePart(left).split("\\.", -1);
+            String[] rightParts = releasePart(right).split("\\.", -1);
+            for (int i = 0; i < Math.max(leftParts.length, rightParts.length); i++) {
+                int cmp = Integer.compare(segment(leftParts, i), segment(rightParts, i));
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            String leftPre = preReleasePart(left);
+            String rightPre = preReleasePart(right);
+            if (leftPre.isEmpty() || rightPre.isEmpty()) {
+                // A release (no pre-release tag) outranks its own pre-releases.
+                return Integer.compare(leftPre.isEmpty() ? 1 : 0, rightPre.isEmpty() ? 1 : 0);
+            }
+            return leftPre.compareToIgnoreCase(rightPre);
+        }
+
+        private static int segment(String[] parts, int index) {
+            return index < parts.length ? Integer.parseInt(parts[index]) : 0;
+        }
+
+        private static String releasePart(String suffix) {
+            int dash = suffix.indexOf('-');
+            return dash < 0 ? suffix : suffix.substring(0, dash);
+        }
+
+        private static String preReleasePart(String suffix) {
+            int dash = suffix.indexOf('-');
+            return dash < 0 ? "" : suffix.substring(dash + 1);
+        }
     }
 
     private static String stripTrailingSlash(String url) {
