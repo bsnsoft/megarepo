@@ -13,6 +13,7 @@ import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaReposi
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
+import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
 import de.bsnsoft.megarepo.rest.advice.GlobalExceptionHandler;
 import de.bsnsoft.megarepo.security.SecurityConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +40,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -76,6 +80,7 @@ class FirewallAdminControllerTest {
 
     private MockMvc mockMvc;
 
+    @Mock private FirewallEnforcementSettingsService enforcementSettings;
     @Mock private FirewallEnforcementSettingsJpaRepository enforcementRepo;
     @Mock private FirewallRepositoryConfigJpaRepository configRepo;
     @Mock private FirewallViolationJpaRepository violationRepo;
@@ -84,6 +89,7 @@ class FirewallAdminControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(new FirewallAdminController(
+                        enforcementSettings,
                         enforcementRepo,
                         configRepo,
                         violationRepo,
@@ -204,7 +210,7 @@ class FirewallAdminControllerTest {
                         .value(org.hamcrest.Matchers.containsString(
                                 FirewallAdminController.ENFORCEMENT_CONFIRMATION)));
 
-        verify(enforcementRepo, never()).save(any());
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
     }
 
     @Test
@@ -217,14 +223,14 @@ class FirewallAdminControllerTest {
                         .content("{\"enabled\":true,\"confirmation\":\"yes\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(enforcementRepo, never()).save(any());
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
     }
 
     @Test
     @DisplayName("arming with the exact phrase persists the switch and records who did it")
     void armingWithConfirmationPersists() throws Exception {
         givenEnforcement(false);
-        when(enforcementRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        givenTheSwitchCanBeWritten();
 
         mockMvc.perform(put("/api/v1/admin/firewall/enforcement")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -233,20 +239,23 @@ class FirewallAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true));
 
-        ArgumentCaptor<FirewallEnforcementSettingsEntity> saved =
-                ArgumentCaptor.forClass(FirewallEnforcementSettingsEntity.class);
-        verify(enforcementRepo).save(saved.capture());
-        assertThat(saved.getValue().isEnabled()).isTrue();
-        assertThat(saved.getValue().getId())
-                .isEqualTo(FirewallEnforcementSettingsEntity.SINGLETON_ID);
-        assertThat(saved.getValue().getUpdatedBy()).isNotNull();
+        // Through the service, never straight to the row: that is what claims the
+        // switch, stamps the watermark and makes the change effective at once.
+        // FirewallSwitchEndToEndTest proves the consequence against a live
+        // download; this asserts the call that produces it.
+        ArgumentCaptor<Boolean> enabled = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<String> updatedBy = ArgumentCaptor.forClass(String.class);
+        verify(enforcementSettings).save(enabled.capture(), updatedBy.capture());
+        verify(enforcementRepo, never()).save(any());
+        assertThat(enabled.getValue()).isTrue();
+        assertThat(updatedBy.getValue()).isNotNull();
     }
 
     @Test
     @DisplayName("disarming needs no confirmation — the safe direction is never gated")
     void disarmingNeedsNoConfirmation() throws Exception {
         givenEnforcement(true);
-        when(enforcementRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        givenTheSwitchCanBeWritten();
 
         mockMvc.perform(put("/api/v1/admin/firewall/enforcement")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -254,7 +263,7 @@ class FirewallAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(false));
 
-        verify(enforcementRepo).save(any());
+        verify(enforcementSettings).save(eq(false), any());
     }
 
     @Test
@@ -268,7 +277,7 @@ class FirewallAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true));
 
-        verify(enforcementRepo, never()).save(any());
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
     }
 
     @Test
@@ -279,7 +288,7 @@ class FirewallAdminControllerTest {
                         .content("{\"confirmation\":\"ENABLE ENFORCEMENT\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(enforcementRepo, never()).save(any());
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
     }
 
     @Test
@@ -419,12 +428,35 @@ class FirewallAdminControllerTest {
 
     // ── Fixtures ────────────────────────────────────────────────────────
 
+    /**
+     * The switch as the controller must see it: its value from the service that
+     * enforces it, and only the audit metadata from the row.
+     *
+     * <p>The row stub is lenient because the paths that refuse a request answer
+     * before they need any metadata — but they all consult the service first, so
+     * that stub stays strict.
+     */
     private void givenEnforcement(boolean enabled) {
+        when(enforcementSettings.enforcementEnabled()).thenReturn(enabled);
+
         FirewallEnforcementSettingsEntity settings = new FirewallEnforcementSettingsEntity();
+        settings.setConfigured(true);
         settings.setEnabled(enabled);
         settings.setUpdatedAt(Instant.parse("2026-08-01T09:00:00Z"));
         settings.setUpdatedBy("admin");
-        when(enforcementRepo.current()).thenReturn(settings);
+        lenient().when(enforcementRepo.current()).thenReturn(settings);
+    }
+
+    /** Makes {@code save} behave like the real service: it claims the row and returns it. */
+    private void givenTheSwitchCanBeWritten() {
+        when(enforcementSettings.save(anyBoolean(), any())).thenAnswer(invocation -> {
+            FirewallEnforcementSettingsEntity saved = new FirewallEnforcementSettingsEntity();
+            saved.setConfigured(true);
+            saved.setEnabled(invocation.getArgument(0));
+            saved.setUpdatedAt(Instant.parse("2026-08-01T10:00:00Z"));
+            saved.setUpdatedBy(invocation.getArgument(1));
+            return saved;
+        });
     }
 
     private void givenRepositories(RepositoryEntity... repositories) {

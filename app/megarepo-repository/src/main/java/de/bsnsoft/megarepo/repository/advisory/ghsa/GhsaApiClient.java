@@ -3,6 +3,7 @@ package de.bsnsoft.megarepo.repository.advisory.ghsa;
 import de.bsnsoft.megarepo.repository.proxy.RemoteHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -59,6 +60,14 @@ public class GhsaApiClient {
     private final GhsaProperties properties;
     private final String userAgent;
 
+    /**
+     * {@code @Autowired} is not decoration here. This class has two constructors
+     * and Spring only infers one when there is exactly one declared; with two and
+     * no annotation it falls back to a no-arg constructor that does not exist, and
+     * the whole application context fails to start. {@code NvdAdvisorySource} and
+     * {@code AdvisoryIngestService} carry the annotation for the same reason.
+     */
+    @Autowired
     public GhsaApiClient(
             RemoteHttpClient remoteHttpClient,
             GhsaProperties properties,

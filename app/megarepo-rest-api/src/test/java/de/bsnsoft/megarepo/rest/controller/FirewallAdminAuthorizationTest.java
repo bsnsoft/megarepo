@@ -6,6 +6,7 @@ import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaReposi
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
+import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
 import de.bsnsoft.megarepo.security.SecurityConfig;
 import de.bsnsoft.megarepo.security.auth.AnonymousAccessFilter;
 import de.bsnsoft.megarepo.security.auth.JwtAuthenticationFilter;
@@ -29,6 +30,7 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -70,6 +72,7 @@ class FirewallAdminAuthorizationTest {
 
     @Autowired private WebApplicationContext context;
     @Autowired private FirewallEnforcementSettingsJpaRepository enforcementRepo;
+    @Autowired private FirewallEnforcementSettingsService enforcementSettings;
 
     private MockMvc mockMvc;
 
@@ -90,6 +93,9 @@ class FirewallAdminAuthorizationTest {
                         .content("{\"enabled\":true,\"confirmation\":\"ENABLE ENFORCEMENT\"}"))
                 .andExpect(status().isUnauthorized());
 
+        // The switch is written through the service, so that is where a leak
+        // past the filter chain would show up first.
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
         verify(enforcementRepo, never()).save(any());
     }
 
@@ -106,6 +112,9 @@ class FirewallAdminAuthorizationTest {
                         .content("{\"enabled\":true,\"confirmation\":\"ENABLE ENFORCEMENT\"}"))
                 .andExpect(status().isForbidden());
 
+        // The switch is written through the service, so that is where a leak
+        // past the filter chain would show up first.
+        verify(enforcementSettings, never()).save(anyBoolean(), any());
         verify(enforcementRepo, never()).save(any());
     }
 
@@ -122,16 +131,23 @@ class FirewallAdminAuthorizationTest {
 
         @Bean
         FirewallAdminController firewallAdminController(
+                FirewallEnforcementSettingsService enforcementSettings,
                 FirewallEnforcementSettingsJpaRepository enforcementRepo,
                 FirewallRepositoryConfigJpaRepository configRepo,
                 FirewallViolationJpaRepository violationRepo,
                 RepositoryJpaRepository repositoryRepo) {
             return new FirewallAdminController(
+                    enforcementSettings,
                     enforcementRepo,
                     configRepo,
                     violationRepo,
                     repositoryRepo,
                     FirewallAuditProperties.defaults());
+        }
+
+        @Bean
+        FirewallEnforcementSettingsService enforcementSettingsService() {
+            return mock(FirewallEnforcementSettingsService.class);
         }
 
         @Bean
