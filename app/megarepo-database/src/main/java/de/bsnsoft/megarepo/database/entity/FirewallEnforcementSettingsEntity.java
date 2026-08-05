@@ -25,9 +25,16 @@ import java.time.Instant;
 @Table(name = "firewall_enforcement_settings")
 public class FirewallEnforcementSettingsEntity {
 
+    /**
+     * The only id this table ever holds — the migration pins it with
+     * {@code CHECK (id = 1)}. Named so that callers look the row up by the
+     * constant instead of repeating the literal.
+     */
+    public static final int SINGLETON_ID = 1;
+
     @Id
     @Column(name = "id")
-    private Integer id = 1;
+    private Integer id = SINGLETON_ID;
 
     /**
      * Whether an operator has ever written this row. False means the

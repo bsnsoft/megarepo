@@ -5,9 +5,12 @@ import de.bsnsoft.megarepo.database.entity.FirewallViolationEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,4 +38,33 @@ public interface FirewallViolationJpaRepository extends JpaRepository<FirewallVi
     Page<FirewallViolationEntity> findByPurlOrderByOccurredAtDesc(String purl, Pageable pageable);
 
     long countByOccurredAtAfter(Instant since);
+
+    /**
+     * How many violations each repository has accumulated since {@code since},
+     * in one grouped query.
+     *
+     * <p>The administration overview lists every repository with its count. Doing
+     * that with a count per row turns a page render into one query per
+     * repository; this is the same answer in one round trip.
+     *
+     * <p>Rows whose repository has been deleted ({@code repository_id IS NULL},
+     * see V13) are excluded — they belong to no row in the overview. They are
+     * still returned by the violation list itself, which keeps
+     * {@code repository_name}.
+     */
+    @Query(
+            """
+            SELECT v.repositoryId AS repositoryId, COUNT(v) AS violations
+            FROM FirewallViolationEntity v
+            WHERE v.repositoryId IS NOT NULL AND v.occurredAt >= :since
+            GROUP BY v.repositoryId
+            """)
+    List<RepositoryViolationCount> countByRepositorySince(@Param("since") Instant since);
+
+    /** Projection for {@link #countByRepositorySince(Instant)}. */
+    interface RepositoryViolationCount {
+        UUID getRepositoryId();
+
+        long getViolations();
+    }
 }

@@ -308,6 +308,76 @@ export interface NvdWhitelistEntry {
   addedBy: string | null;
 }
 
+// ── Repository Firewall (Administration → Security → Repository Firewall) ──
+
+/** Configured intent for a repository. Says nothing about what actually happens. */
+export type FirewallMode = 'OFF' | 'AUDIT' | 'QUARANTINE';
+
+/**
+ * What the firewall actually does for a repository, once the global enforcement
+ * switch and the configured mode are taken together. Resolved by the backend so
+ * the UI cannot drift from it.
+ *
+ * `QUARANTINE_NOT_ENFORCED` is the state that matters: the repository is
+ * configured for blocking and blocks nothing, because the instance is not armed.
+ * Never render it as "Quarantine".
+ */
+export type FirewallEffectiveState =
+  | 'NOT_EVALUATED'
+  | 'OBSERVING'
+  | 'QUARANTINE_NOT_ENFORCED'
+  | 'BLOCKING';
+
+export interface FirewallEnforcement {
+  enabled: boolean;
+  updatedAt: string;
+  updatedBy: string | null;
+  /** Exact phrase that must be sent to turn enforcement on. Never needed to turn it off. */
+  requiredConfirmation: string;
+}
+
+export interface FirewallRepositoryState {
+  repositoryId: string;
+  repositoryName: string;
+  format: string;
+  type: string;
+  mode: FirewallMode;
+  failMode: 'FAIL_OPEN' | 'FAIL_CLOSED' | null;
+  effectiveState: FirewallEffectiveState;
+  /** False when no per-repository row exists and the instance default applies. */
+  configured: boolean;
+  violations: number;
+  updatedAt: string | null;
+}
+
+export interface FirewallStateSummary {
+  blocking: number;
+  quarantineNotEnforced: number;
+  observing: number;
+  notEvaluated: number;
+}
+
+/** One consistent snapshot — switch, repositories and summary from a single read. */
+export interface FirewallOverview {
+  enforcement: FirewallEnforcement;
+  violationWindowDays: number;
+  summary: FirewallStateSummary;
+  repositories: FirewallRepositoryState[];
+}
+
+export interface FirewallViolation {
+  id: number;
+  repositoryId: string | null;
+  repositoryName: string;
+  purl: string;
+  policyId: string | null;
+  ruleType: string;
+  action: 'WARN' | 'BLOCK';
+  advisoryIds: string[];
+  occurredAt: string;
+  requestContext: Record<string, unknown>;
+}
+
 /** Supported repository formats */
 export type RepositoryFormat = 'maven2' | 'pypi' | 'npm' | 'nuget' | 'raw' | 'docker';
 
