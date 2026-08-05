@@ -55,6 +55,15 @@ public interface AdvisoryAffectedJpaRepository extends JpaRepository<AdvisoryAff
 
     List<AdvisoryAffectedEntity> findByAdvisoryId(String advisoryId);
 
+    /**
+     * How many affected ranges came from a given purl type. Used by the CPE/purl
+     * comparison report to state, before any of its own numbers, how much
+     * purl-native data ({@code maven}, {@code npm}, …) and how much CPE-derived
+     * data ({@code cpe}) the store held when it ran — a comparison over an
+     * unfinished ingest is not a comparison.
+     */
+    long countByPurlType(String purlType);
+
     @Modifying
     @Query("DELETE FROM AdvisoryAffectedEntity a WHERE a.advisoryId = :advisoryId")
     int deleteByAdvisoryId(@Param("advisoryId") String advisoryId);

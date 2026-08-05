@@ -43,4 +43,19 @@ public interface ComponentJpaRepository extends JpaRepository<ComponentEntity, U
     List<ComponentEntity> findByRepositoryIdAndNamespaceAndName(UUID repositoryId, String namespace, String name);
 
     long countByRepositoryId(UUID repositoryId);
+
+    /**
+     * Paged scan for the CPE/purl comparison report.
+     *
+     * <p>Returns a {@link List} rather than a {@link Page} on purpose: Spring
+     * Data issues a {@code COUNT(*)} alongside every full {@code Page}, and the
+     * report walks the whole table. On a large instance that would be one
+     * sequential count per batch for a total this caller does not need — it
+     * stops when a batch comes back short. The {@code IdNotNull} predicate is
+     * always true and exists only because a derived query needs one.
+     */
+    List<ComponentEntity> findAllByIdNotNull(Pageable pageable);
+
+    /** The same scan restricted to a set of repositories. */
+    List<ComponentEntity> findAllByRepositoryIdIn(List<UUID> repositoryIds, Pageable pageable);
 }
