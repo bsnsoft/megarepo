@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfigurat
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -105,10 +106,23 @@ public abstract class AdvisoryDatabaseTest {
      * plain {@code @SpringBootApplication} would auto-configure both. Listing the
      * three auto-configurations that are actually needed keeps the context small
      * and the failure modes obvious.
+     *
+     * <p>The remote-backed sources ({@code osv}, {@code ghsa}) are scanned out.
+     * These tests drive ingest and lookup through stub sources — the point is how
+     * rows are written and queried, not how a feed is downloaded. Pulling the real
+     * sources in would drag their HTTP clients and configuration properties into a
+     * context that deliberately has neither, and would fail here for reasons that
+     * say nothing about the database behaviour under test. The NVD source stays: it
+     * reads the local mirror, needs no network, and one test asserts exactly that.
      */
     @Configuration(proxyBeanMethods = false)
     @Import(JpaConfig.class)
-    @ComponentScan(basePackageClasses = AdvisoryIngestService.class)
+    @ComponentScan(
+            basePackageClasses = AdvisoryIngestService.class,
+            excludeFilters =
+                    @ComponentScan.Filter(
+                            type = FilterType.REGEX,
+                            pattern = "de\\.bsnsoft\\.megarepo\\.repository\\.advisory\\.(osv|ghsa)\\..*"))
     @ImportAutoConfiguration({
         DataSourceAutoConfiguration.class,
         DataSourceTransactionManagerAutoConfiguration.class,
