@@ -131,13 +131,48 @@ megarepo:
         # The scheduled_tasks row's own "enabled" flag is the operator's switch;
         # this one is the environment's. Nothing is imported at startup.
         enabled: true
-    # Repository firewall, Phase 1 — AUDIT ONLY. NOTHING HERE BLOCKS A DOWNLOAD.
+    # Repository firewall enforcement — the global master switch.
+    #
+    # OFF BY DEFAULT, and while it is off nothing is ever blocked, no matter what
+    # mode a single repository is in. Blocking needs BOTH of these:
+    #
+    #   1. this switch on, and
+    #   2. the repository's firewall_repository_config.mode = QUARANTINE.
+    #
+    # This value is only the fallback. Once the switch has been set through the
+    # API/UI, the firewall_enforcement_settings row wins and this property is
+    # ignored — the same layering megarepo.outbound-proxy.* uses. Flipping the
+    # switch takes effect without a restart.
+    #
+    # When enforcement is first switched on, the moment is recorded. Components
+    # already stored in a repository before that moment are audited but never
+    # blocked, so switching it on cannot break a build that depends on something
+    # already cached.
+    enforcement:
+      enabled: false
+      # How long a download may wait for a verdict. The evaluation only reads the
+      # local database, so this bounds the pathological case. Exceeding it is not
+      # an "allowed" answer — the repository's fail_mode decides (FAIL_OPEN
+      # serves, FAIL_CLOSED denies), and FAIL_OPEN is the default.
+      evaluation-timeout: 2s
+      # How long the master switch is cached in memory. It is read on every
+      # download, so it is not fetched per request; a change made through the API
+      # applies immediately on this node, and this bounds how long a change made
+      # elsewhere takes to be noticed.
+      settings-refresh-interval: 10s
+      # Pool that runs the evaluation off the request thread, and its bounded
+      # backlog. A rejected evaluation is an "unavailable" verdict handed to
+      # fail_mode, never a queued request.
+      threads: 4
+      queue-capacity: 200
+    # Repository firewall observation — AUDIT. NOTHING HERE BLOCKS A DOWNLOAD.
     #
     # The observation runs after the artifact has already been streamed to the
     # client: it identifies the component (purl), asks the local advisory mirror
     # which advisories name it, and writes what it found to firewall_violation.
-    # A repository set to QUARANTINE is treated exactly like AUDIT — enforcement
-    # is Phase 2, and the recorded rows say so (enforced=false).
+    # A repository set to QUARANTINE is observed exactly like AUDIT unless the
+    # enforcement switch above is on, and the recorded rows say which it was
+    # (enforced=true/false).
     audit:
       enabled: true
       # Mode for repositories with no firewall_repository_config row.

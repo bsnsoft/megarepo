@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Flyway migration tests for the Phase 1 repository firewall schema
- * (V11 policies, V12 advisories, V13 violations).
+ * Flyway migration tests for the repository firewall schema (V11 policies,
+ * V12 advisories, V13 violations, V16 enforcement switch and default policy).
  *
  * <p>Two paths are covered, because both happen in the field: a brand new
  * installation, and an existing installation that already runs the V8 NVD
@@ -32,6 +32,21 @@ class FirewallMigrationTest {
     private static final List<String> FIREWALL_TABLES = List.of(
             "firewall_policy",
             "firewall_policy_rule",
+            "firewall_repository_config",
+            "firewall_enforcement_settings",
+            "advisory",
+            "advisory_affected",
+            "advisory_sync_state",
+            "firewall_violation");
+
+    /**
+     * Firewall tables that carry no seeded data. {@code firewall_policy} and
+     * {@code firewall_policy_rule} are missing on purpose: V16 seeds the default
+     * policy, because a repository put into QUARANTINE with no policy assigned
+     * has to resolve to something. {@code firewall_enforcement_settings} is
+     * missing because its single row is the master switch itself — seeded off.
+     */
+    private static final List<String> UNSEEDED_FIREWALL_TABLES = List.of(
             "firewall_repository_config",
             "advisory",
             "advisory_affected",
@@ -134,13 +149,98 @@ class FirewallMigrationTest {
             assertThat(scalarBoolean(connection, "SELECT enabled FROM nvd_firewall_settings WHERE id = 1"))
                     .isTrue();
 
-            // 5. The new tables are there and empty — Phase 1 adds no data migration.
+            // 5. The new tables are there, and none of them was given data
+            //    derived from the V8 firewall — that migration is still deferred.
             for (String table : FIREWALL_TABLES) {
                 assertThat(tableExists(connection, table)).as("table %s created", table).isTrue();
+            }
+            for (String table : UNSEEDED_FIREWALL_TABLES) {
                 assertThat(scalarLong(connection, "SELECT COUNT(*) FROM " + table))
-                        .as("%s starts empty; the V8 data migration is Phase 2", table)
+                        .as("%s starts empty; the V8 data migration is still deferred", table)
                         .isZero();
             }
+
+            // 6. The one thing an upgrade must never do: start blocking.
+            assertThat(scalarBoolean(
+                    connection, "SELECT enabled FROM firewall_enforcement_settings WHERE id = 1"))
+                    .as("upgrading must not switch enforcement on")
+                    .isFalse();
+            assertThat(scalarLong(
+                    connection, "SELECT COUNT(*) FROM firewall_repository_config WHERE mode = 'QUARANTINE'"))
+                    .as("upgrading must not put any repository into QUARANTINE")
+                    .isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("V16 seeds the master switch off and a default policy with the two implemented rules")
+    void enforcementSeedIsInertUntilSwitchedOn() throws SQLException {
+        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_enforcement");
+        Flyway flyway = flywayFor(jdbcUrl);
+        assertThat(flyway.migrate().success).isTrue();
+        assertThat(appliedVersions(flyway)).contains("16");
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl)) {
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM firewall_enforcement_settings"))
+                    .isEqualTo(1);
+            assertThat(scalarBoolean(
+                    connection, "SELECT enabled FROM firewall_enforcement_settings WHERE id = 1"))
+                    .isFalse();
+            assertThat(scalarBoolean(
+                    connection, "SELECT configured FROM firewall_enforcement_settings WHERE id = 1"))
+                    .as("nobody has decided yet, so the deployment-side property still applies")
+                    .isFalse();
+            assertThat(scalarLong(connection,
+                    "SELECT COUNT(*) FROM firewall_enforcement_settings WHERE enforcing_since IS NULL"))
+                    .as("the grandfathering watermark is stamped on first enable, not by the migration")
+                    .isEqualTo(1);
+
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM firewall_policy WHERE is_default"))
+                    .isEqualTo(1);
+            assertThat(scalarLong(connection, """
+                    SELECT COUNT(*) FROM firewall_policy_rule r
+                    JOIN firewall_policy p ON p.id = r.policy_id
+                    WHERE p.is_default AND r.rule_type IN ('CVSS_THRESHOLD', 'KNOWN_MALICIOUS')
+                      AND r.action = 'BLOCK' AND r.enabled
+                    """)).isEqualTo(2);
+            assertThat(scalarLong(connection, """
+                    SELECT COUNT(*) FROM firewall_policy_rule r
+                    JOIN firewall_policy p ON p.id = r.policy_id
+                    WHERE p.is_default AND r.rule_type NOT IN ('CVSS_THRESHOLD', 'KNOWN_MALICIOUS')
+                    """))
+                    .as("seeding a rule type the engine does not implement would be a rule nobody enforces")
+                    .isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("V16 does not add a second default policy to an installation that already has one")
+    void defaultPolicySeedIsConditional() throws SQLException {
+        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_own_policy");
+
+        Flyway toV15 = Flyway.configure()
+                .dataSource(jdbcUrl, PostgresTestSupport.USERNAME, PostgresTestSupport.PASSWORD)
+                .locations("classpath:db/migration")
+                .placeholderReplacement(false)
+                .target(MigrationVersion.fromVersion("15"))
+                .load();
+        assertThat(toV15.migrate().success).isTrue();
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate(
+                    "INSERT INTO firewall_policy (name, is_default) VALUES ('House rules', true)");
+        }
+
+        assertThat(flywayFor(jdbcUrl).migrate().success).isTrue();
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl)) {
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM firewall_policy WHERE is_default"))
+                    .isEqualTo(1);
+            assertThat(scalarLong(
+                    connection, "SELECT COUNT(*) FROM firewall_policy WHERE name = 'House rules'"))
+                    .as("the operator's own default policy is left alone")
+                    .isEqualTo(1);
         }
     }
 
@@ -196,8 +296,9 @@ class FirewallMigrationTest {
 
         try (Connection connection = PostgresTestSupport.connect(jdbcUrl);
              Statement statement = connection.createStatement()) {
+            // Not named "Default": V16 already seeded a policy under that name.
             statement.executeUpdate(
-                    "INSERT INTO firewall_policy (id, name) VALUES ('11111111-1111-1111-1111-111111111111', 'Default')");
+                    "INSERT INTO firewall_policy (id, name) VALUES ('11111111-1111-1111-1111-111111111111', 'Probe')");
 
             // action is a closed set.
             assertThatThrownBy(() -> statement.executeUpdate("""
@@ -235,7 +336,7 @@ class FirewallMigrationTest {
 
         try (Connection connection = PostgresTestSupport.connect(jdbcUrl);
              Statement statement = connection.createStatement()) {
-            statement.executeUpdate("INSERT INTO firewall_policy (name, is_default) VALUES ('Default', true)");
+            // V16 seeded the one default policy there may be.
             assertThatThrownBy(() -> statement.executeUpdate(
                     "INSERT INTO firewall_policy (name, is_default) VALUES ('Second', true)"))
                     .hasMessageContaining("idx_firewall_policy_single_default");

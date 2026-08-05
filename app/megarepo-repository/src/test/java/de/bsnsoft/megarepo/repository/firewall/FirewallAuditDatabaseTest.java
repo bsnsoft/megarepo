@@ -405,16 +405,20 @@ class FirewallAuditDatabaseTest {
      * scanned out: they bring HTTP clients and configuration properties this
      * context deliberately has none of, and this test drives the lookup from rows
      * inserted directly. The NVD source stays — it reads the local mirror and
-     * needs no network.
+     * needs no network. The sibling test's own {@code TestConfig} is scanned out
+     * too — it lives in this package, so the scan would otherwise pull a second
+     * test's context definition into this one.
      */
     @Configuration(proxyBeanMethods = false)
     @Import(JpaConfig.class)
     @ComponentScan(
             basePackageClasses = {FirewallEvaluationService.class, AdvisoryLookupService.class},
-            excludeFilters =
-                    @ComponentScan.Filter(
-                            type = FilterType.REGEX,
-                            pattern = "de\\.bsnsoft\\.megarepo\\.repository\\.advisory\\.(osv|ghsa)\\..*"))
+            excludeFilters = {
+                @ComponentScan.Filter(
+                        type = FilterType.REGEX,
+                        pattern = "de\\.bsnsoft\\.megarepo\\.repository\\.advisory\\.(osv|ghsa)\\..*"),
+                @ComponentScan.Filter(type = FilterType.REGEX, pattern = ".*Test\\$TestConfig")
+            })
     @ImportAutoConfiguration({
         DataSourceAutoConfiguration.class,
         DataSourceTransactionManagerAutoConfiguration.class,

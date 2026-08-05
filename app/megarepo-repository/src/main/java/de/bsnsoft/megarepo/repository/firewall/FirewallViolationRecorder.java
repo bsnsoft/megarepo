@@ -64,12 +64,21 @@ import java.util.UUID;
  * harmless in an append-only log and is not worth a lock on the request path's
  * shadow; the check is an anti-flood measure, not a uniqueness constraint.
  *
- * <h2>What is deliberately not filled in</h2>
+ * <h2>Observations and decisions</h2>
  *
- * {@code policy_id} stays null. Phase 1 evaluates no policy, and a non-null
- * value there would claim that a specific policy's rule fired. The repository's
- * assigned policy — if any — is recorded inside {@code request_context} instead,
- * where it reads as context rather than as a verdict.
+ * {@link #record} writes an observation: "these advisories name this component",
+ * rule type {@code ADVISORY_MATCH}, action {@code WARN}, {@code policy_id} null.
+ * A non-null policy id there would claim that a specific policy's rule fired,
+ * and on the observation path none did.
+ *
+ * <p>{@link #recordDecision} writes what the policy engine concluded: one row
+ * per matched rule, with that rule's own type, the policy that owns it, and an
+ * action that states what <em>happened</em> — {@code BLOCK} only when the
+ * download was actually denied. A blocking rule that matched a component which
+ * was already in the repository is recorded as {@code WARN} with
+ * {@code ruleAction=BLOCK} in the context, because writing {@code BLOCK} for a
+ * download that went out would make the log lie about the one thing it exists to
+ * record.
  */
 @Service
 public class FirewallViolationRecorder {
@@ -127,10 +136,16 @@ public class FirewallViolationRecorder {
         String purl = truncate(identity.key(), MAX_PURL_LENGTH);
         String[] advisoryIds = advisoryIds(findings);
 
-        if (isExactRepeat(repositoryId, purl, advisoryIds)) {
+        if (isExactRepeat(repositoryId, purl, FirewallRuleType.ADVISORY_MATCH, advisoryIds)) {
             log.trace("Firewall AUDIT: {} in {} already on file with the same advisories", purl, repositoryName);
             return false;
         }
+
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("phase", "audit");
+        header.put("enforced", false);
+        header.put("enforcementDeferred", settings.enforcementDeferred(false));
+        header.put("failModeApplied", false);
 
         FirewallViolationEntity entity = new FirewallViolationEntity();
         entity.setRepositoryId(repositoryId);
@@ -142,11 +157,122 @@ public class FirewallViolationRecorder {
         entity.setAction(FirewallAction.WARN);
         entity.setAdvisoryIds(advisoryIds);
         entity.setOccurredAt(Instant.now());
-        entity.setRequestContext(buildContext(settings, findings, context));
+        entity.setRequestContext(buildContext(header, settings, findings, context));
 
         violations.save(entity);
         log.info("Firewall AUDIT: {} in {} matched {} advisor(y|ies) — served anyway",
                 purl, repositoryName, advisoryIds.length);
+        return true;
+    }
+
+    /**
+     * Records what the policy engine concluded about one download.
+     *
+     * <p>One row per matched rule, so a component that trips both the CVSS
+     * threshold and the malicious-package rule leaves two rows naming two
+     * different reasons rather than one row that has to pick. When the policy
+     * matched nothing but advisories exist anyway, the plain
+     * {@code ADVISORY_MATCH} observation is written instead: an enforcing
+     * repository must not have a <em>thinner</em> audit trail than an observing
+     * one just because its policy happened to tolerate the finding.
+     *
+     * <p>Runs after the verdict has been given, off the request thread. A
+     * failure here therefore degrades the audit trail and nothing else; the
+     * caller ({@link FirewallEnforcementService}) swallows it, because a
+     * download that was already allowed or denied must not change outcome
+     * because a log write failed.
+     *
+     * @param evaluation the finished evaluation, decision included
+     * @param context who asked for the component
+     * @return how many rows were written; 0 when everything was suppressed as an
+     *     exact repeat
+     */
+    @Transactional
+    public int recordDecision(FirewallEvaluation evaluation, FirewallRequestContext context) {
+        Objects.requireNonNull(evaluation, "evaluation must not be null");
+        if (evaluation.repositoryId() == null || evaluation.identity() == null) {
+            return 0;
+        }
+        FirewallDecision decision = evaluation.decision();
+        if (decision.violations().isEmpty()) {
+            if (!evaluation.hasFindings()) {
+                return 0;
+            }
+            return record(
+                    evaluation.repositoryId(),
+                    evaluation.repositoryName(),
+                    evaluation.identity(),
+                    evaluation.settings(),
+                    evaluation.findings(),
+                    context) ? 1 : 0;
+        }
+
+        String purl = truncate(evaluation.identity().key(), MAX_PURL_LENGTH);
+        int written = 0;
+        for (FirewallRuleViolation violation : decision.violations()) {
+            if (writeRuleViolation(evaluation, violation, purl, context)) {
+                written++;
+            }
+        }
+        return written;
+    }
+
+    private boolean writeRuleViolation(
+            FirewallEvaluation evaluation,
+            FirewallRuleViolation violation,
+            String purl,
+            FirewallRequestContext context) {
+
+        FirewallDecision decision = evaluation.decision();
+        // Same normalisation as the observation path, so the repeat check
+        // compares like with like.
+        String[] advisoryIds = sorted(violation.advisoryIds().toArray(String[]::new));
+
+        if (isExactRepeat(evaluation.repositoryId(), purl, violation.ruleType(), advisoryIds)) {
+            return false;
+        }
+
+        // What happened, not what the rule wanted: a BLOCK rule whose component
+        // was grandfathered in was served, and the row has to say so.
+        boolean denied = decision.blocked() && violation.blocks();
+        FirewallAction recorded = denied ? FirewallAction.BLOCK : FirewallAction.WARN;
+
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("phase", "enforcement");
+        header.put("enforced", true);
+        header.put("enforcementDeferred", false);
+        header.put("blocked", denied);
+        header.put("decision", decision.reason().name());
+        header.put("ruleAction", violation.action().name());
+        header.put("rule", violation.ruleType().name());
+        header.put("ruleReason", violation.reason());
+        header.put("preExisting", evaluation.preExisting());
+        header.put("failModeApplied", decision.failModeApplied());
+        if (decision.policyName() != null) {
+            header.put("policy", decision.policyName());
+        }
+
+        FirewallViolationEntity entity = new FirewallViolationEntity();
+        entity.setRepositoryId(evaluation.repositoryId());
+        entity.setRepositoryName(truncate(evaluation.repositoryName(), MAX_REPOSITORY_NAME_LENGTH));
+        entity.setPurl(purl);
+        entity.setPolicyId(decision.policyId());
+        entity.setRuleType(violation.ruleType());
+        entity.setAction(recorded);
+        entity.setAdvisoryIds(advisoryIds);
+        entity.setOccurredAt(Instant.now());
+        entity.setRequestContext(
+                buildContext(header, evaluation.settings(), evaluation.findings(), context));
+
+        violations.save(entity);
+        if (denied) {
+            log.warn("Firewall BLOCKED {} in {}: {} — {}",
+                    purl, evaluation.repositoryName(), violation.ruleType(), violation.reason());
+        } else {
+            log.info("Firewall {} {} in {}: {} — {} (served)",
+                    evaluation.preExisting() ? "grandfathered" : "warned about",
+                    purl, evaluation.repositoryName(), violation.ruleType(), violation.reason());
+        }
         return true;
     }
 
@@ -156,13 +282,14 @@ public class FirewallViolationRecorder {
      * <p>A zero window disables suppression entirely, which is what a comparison
      * run that wants every single observation would configure.
      */
-    private boolean isExactRepeat(UUID repositoryId, String purl, String[] advisoryIds) {
+    private boolean isExactRepeat(
+            UUID repositoryId, String purl, FirewallRuleType ruleType, String[] advisoryIds) {
         if (properties.suppressionWindow().isZero()) {
             return false;
         }
         Optional<FirewallViolationEntity> previous =
                 violations.findFirstByRepositoryIdAndPurlAndRuleTypeOrderByOccurredAtDesc(
-                        repositoryId, purl, FirewallRuleType.ADVISORY_MATCH);
+                        repositoryId, purl, ruleType);
         if (previous.isEmpty()) {
             return false;
         }
@@ -198,28 +325,24 @@ public class FirewallViolationRecorder {
     }
 
     /**
-     * The evidence for the finding, and an unambiguous statement that nothing was
-     * enforced.
+     * The evidence for the finding, plus an unambiguous statement of what was
+     * done about it.
      *
-     * <p>{@code enforced=false} and {@code phase="audit"} are written on every
-     * row, including rows from repositories configured as QUARANTINE. Without
-     * them a QUARANTINE-mode violation reads as "this download was held", which
-     * in Phase 1 it never was.
+     * <p>{@code phase}, {@code enforced} and {@code blocked} come from the
+     * caller's {@code header} and are written on every row. Without them a
+     * QUARANTINE-mode violation reads as "this download was held" whether or not
+     * it was, and the audit trail from the observation phase becomes
+     * indistinguishable from enforced verdicts.
      */
     private static Map<String, Object> buildContext(
+            Map<String, Object> header,
             FirewallRepositorySettings settings,
             List<AdvisoryFinding> findings,
             FirewallRequestContext request) {
 
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("phase", "audit");
-        context.put("enforced", false);
+        Map<String, Object> context = new LinkedHashMap<>(header);
         context.put("mode", settings.mode().name());
-        context.put("enforcementDeferred", settings.enforcementDeferred());
-        // Recorded, not honoured: FAIL_CLOSED has nothing to fail closed on while
-        // no rule produces a verdict, and must not start denying downloads here.
         context.put("failMode", settings.failMode().name());
-        context.put("failModeApplied", false);
         context.put("modeSource", settings.explicit() ? "repository-config" : "default");
         if (settings.policyId() != null) {
             context.put("assignedPolicyId", settings.policyId().toString());
@@ -273,8 +396,8 @@ public class FirewallViolationRecorder {
         return findings.stream()
                 .map(AdvisoryFinding::confidence)
                 .min(Comparable::compareTo)
-                .orElseThrow()
-                .name();
+                .map(Enum::name)
+                .orElse(null);
     }
 
     private static Set<String> allSources(List<AdvisoryFinding> findings) {

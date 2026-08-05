@@ -129,7 +129,7 @@ class FirewallEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("QUARANTINE is treated exactly like AUDIT — it records, and it does not block")
+    @DisplayName("QUARANTINE is observed exactly like AUDIT here — this path records and never blocks")
     void quarantineBehavesLikeAuditInPhaseOne() {
         givenMode(FirewallMode.QUARANTINE);
         givenMavenComponent();
@@ -140,9 +140,12 @@ class FirewallEvaluationServiceTest {
 
         assertThat(evaluation.outcome()).isEqualTo(FirewallEvaluation.Outcome.RECORDED);
         assertThat(evaluation.blocked())
-                .as("enforcement is Phase 2; a QUARANTINE repository is observed, not quarantined")
+                .as("the observation path never blocks, whatever the repository's mode says")
                 .isFalse();
-        assertThat(evaluation.settings().enforcementDeferred()).isTrue();
+        assertThat(evaluation.settings().enforces()).isTrue();
+        assertThat(evaluation.settings().enforcementDeferred(false))
+                .as("a QUARANTINE repository reaching this path is one the master switch left unenforced")
+                .isTrue();
     }
 
     @Test

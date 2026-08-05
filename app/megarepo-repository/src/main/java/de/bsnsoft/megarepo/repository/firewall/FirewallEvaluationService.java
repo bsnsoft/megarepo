@@ -15,26 +15,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Phase 1 of the repository firewall: identify the component behind a download,
- * ask the local advisory store what is known about it, and write down the
- * answer.
+ * The observation path of the repository firewall: identify the component behind
+ * a download, ask the local advisory store what is known about it, and write
+ * down the answer.
  *
  * <h2>What it does not do</h2>
  *
  * It does not block, quarantine, delay or alter a download, and it has no code
- * path that could. There is no policy engine yet either: nothing here decides
- * whether a finding is <em>acceptable</em>, only whether one exists. The
- * customer's Phase 1 scope is "purl identification + advisory sources + AUDIT
- * mode only, no blocking", and AUDIT is defined as "record violations, serve
- * anyway".
+ * path that could — every evaluation it produces carries
+ * {@link FirewallDecision#notEvaluated()}. Nothing here decides whether a
+ * finding is <em>acceptable</em>, only whether one exists; that judgement
+ * belongs to {@link FirewallPolicyEvaluator} and reaches a download only through
+ * {@link FirewallEnforcementService}.
  *
- * <p>Consequently the only thing that reaches {@code firewall_violation} is
- * "these advisories name this component", under
+ * <p>Consequently the only thing this class writes to
+ * {@code firewall_violation} is "these advisories name this component", under
  * {@link de.bsnsoft.megarepo.core.firewall.FirewallRuleType#ADVISORY_MATCH} and
  * always with action {@code WARN}.
  *
@@ -46,12 +47,13 @@ import java.util.UUID;
  *       default (see {@link FirewallAuditProperties#defaultMode()}), so
  *       deploying this code observes nothing until someone opts in.</li>
  *   <li>{@code AUDIT} — evaluate and record.</li>
- *   <li>{@code QUARANTINE} — <b>treated exactly like AUDIT.</b> Enforcement is
- *       Phase 2. A repository configured for QUARANTINE today is observed and
- *       recorded and <em>nothing of its content is withheld</em>; the recorded
- *       row carries {@code mode=QUARANTINE} together with
- *       {@code enforced=false} so the gap is visible in the data and not only
- *       in this comment.</li>
+ *   <li>{@code QUARANTINE} — <b>observed exactly like AUDIT here.</b> A
+ *       repository asking for enforcement only gets it when the global
+ *       enforcement switch is on, and then the request path never reaches this
+ *       class for that download — {@link FirewallEnforcementService} has already
+ *       evaluated and recorded it before the response was written. Whenever this
+ *       class does see a QUARANTINE download, enforcement was off, and the row
+ *       it writes says so ({@code enforced=false}).</li>
  * </ul>
  *
  * <h2>No network, no exceptions</h2>
@@ -127,44 +129,22 @@ public class FirewallEvaluationService {
             if (!settings.evaluates()) {
                 return outcome(repositoryId, repositoryName, path, settings, FirewallEvaluation.Outcome.MODE_OFF);
             }
-            if (settings.enforcementDeferred()) {
-                log.debug("Repository {} is configured for QUARANTINE; Phase 1 observes only and serves anyway",
-                        repositoryName);
+            if (settings.enforces()) {
+                log.debug("Repository {} is configured for QUARANTINE but enforcement is off; "
+                        + "observing only and serving anyway", repositoryName);
             }
 
-            Optional<AssetEntity> asset = assets.findByRepositoryIdAndPath(repositoryId, path);
-            Optional<ComponentEntity> component = asset
-                    .map(AssetEntity::getComponentId)
-                    .flatMap(components::findById);
-            if (component.isEmpty()) {
-                // Checksums, metadata, index pages and anything not yet attached
-                // to a component. Not a finding, not an error.
-                return outcome(repositoryId, repositoryName, path, settings, FirewallEvaluation.Outcome.NO_COMPONENT);
+            FirewallEvaluation inspection = inspect(repositoryId, repositoryName, path, settings, null);
+            if (inspection.outcome() != FirewallEvaluation.Outcome.MATCHED) {
+                return inspection;
             }
 
-            String sha256 = asset.map(AssetEntity::getChecksumSha256).orElse(null);
-            ComponentIdentity identity = purlBuilder.identify(component.get(), sha256);
-
-            if (!identity.isResolvable()) {
-                // Hash or unidentified: no advisory feed indexes those. Recording
-                // it is the UNKNOWN_COMPONENT rule's job, which Phase 2 owns.
-                return new FirewallEvaluation(
-                        repositoryId, repositoryName, path, settings, identity, List.of(),
-                        FirewallEvaluation.Outcome.UNRESOLVABLE_IDENTITY);
-            }
-
-            List<AdvisoryFinding> findings = advisories.findAdvisories(identity);
-            if (findings.isEmpty()) {
-                return new FirewallEvaluation(
-                        repositoryId, repositoryName, path, settings, identity, List.of(),
-                        FirewallEvaluation.Outcome.CLEAN);
-            }
-
-            boolean written =
-                    recorder.record(repositoryId, repositoryName, identity, settings, findings, context);
-            return new FirewallEvaluation(
-                    repositoryId, repositoryName, path, settings, identity, findings,
-                    written ? FirewallEvaluation.Outcome.RECORDED : FirewallEvaluation.Outcome.SUPPRESSED);
+            boolean written = recorder.record(
+                    repositoryId, repositoryName, inspection.identity(), settings,
+                    inspection.findings(), context);
+            return inspection.withOutcome(written
+                    ? FirewallEvaluation.Outcome.RECORDED
+                    : FirewallEvaluation.Outcome.SUPPRESSED);
 
         } catch (RuntimeException e) {
             // The download is already on the wire. Whatever broke here is a
@@ -173,6 +153,93 @@ public class FirewallEvaluationService {
                     repositoryName, path, e);
             return outcome(repositoryId, repositoryName, path, settings, FirewallEvaluation.Outcome.FAILED);
         }
+    }
+
+    /**
+     * Identifies the component behind a path and looks up what is known about
+     * it. Reads only; writes nothing and decides nothing.
+     *
+     * <p>Shared by the observation path above and by
+     * {@link FirewallEnforcementService}, so that "what is this component and
+     * what is wrong with it" is answered by one piece of code no matter which
+     * path asks. The two differ in what they do with the answer, not in how they
+     * get it.
+     *
+     * <p>Unlike {@link #evaluateDownload} this method does <em>not</em> swallow
+     * exceptions. It is called from both a context where a failure means "the
+     * audit trail loses a row" and one where it means "the fail mode has to
+     * decide", and only the caller knows which.
+     *
+     * @param preExistingBefore components whose asset was stored before this
+     *     instant count as already present in the repository. Null means "no
+     *     watermark", which marks nothing as pre-existing — correct for the
+     *     observation path, which does not use the flag at all.
+     * @return an evaluation whose outcome is one of {@code NO_COMPONENT},
+     *     {@code UNRESOLVABLE_IDENTITY}, {@code CLEAN} or {@code MATCHED}
+     */
+    public FirewallEvaluation inspect(
+            UUID repositoryId,
+            String repositoryName,
+            String path,
+            FirewallRepositorySettings settings,
+            Instant preExistingBefore) {
+
+        Optional<AssetEntity> asset = assets.findByRepositoryIdAndPath(repositoryId, path);
+        Optional<ComponentEntity> component = asset
+                .map(AssetEntity::getComponentId)
+                .flatMap(components::findById);
+        if (component.isEmpty()) {
+            // Checksums, metadata, index pages and anything not yet attached
+            // to a component. Not a finding, not an error.
+            return outcome(repositoryId, repositoryName, path, settings, FirewallEvaluation.Outcome.NO_COMPONENT);
+        }
+
+        boolean preExisting = isPreExisting(asset.orElse(null), preExistingBefore);
+        String sha256 = asset.map(AssetEntity::getChecksumSha256).orElse(null);
+        ComponentIdentity identity = purlBuilder.identify(component.get(), sha256);
+
+        if (!identity.isResolvable()) {
+            // Hash or unidentified: no advisory feed indexes those. Recording
+            // it is the UNKNOWN_COMPONENT rule's job, which is not implemented.
+            return new FirewallEvaluation(
+                    repositoryId, repositoryName, path, settings, identity, List.of(),
+                    FirewallEvaluation.Outcome.UNRESOLVABLE_IDENTITY,
+                    preExisting, FirewallDecision.notEvaluated());
+        }
+
+        List<AdvisoryFinding> findings = advisories.findAdvisories(identity);
+        return new FirewallEvaluation(
+                repositoryId, repositoryName, path, settings, identity, findings,
+                findings.isEmpty()
+                        ? FirewallEvaluation.Outcome.CLEAN
+                        : FirewallEvaluation.Outcome.MATCHED,
+                preExisting, FirewallDecision.notEvaluated());
+    }
+
+    /**
+     * Whether the artifact behind this path was already stored in the repository
+     * before the watermark.
+     *
+     * <p>The asset's {@code created_at} is the fact being read: a proxy cache
+     * hit serves a row that was written when the artifact was first pulled, a
+     * cache miss writes the row during the very request being evaluated, and a
+     * hosted artifact's row dates from its upload. So "the asset is older than
+     * the moment enforcement was switched on" is exactly "this was already in
+     * the repository when the operator flipped the switch".
+     *
+     * <p>A null watermark means the caller is not asking the question at all
+     * (the observation path) and answers {@code false}. An asset with no
+     * timestamp answers {@code true}: when the age of a stored artifact cannot
+     * be established, the only safe reading is that it was already there.
+     */
+    private static boolean isPreExisting(AssetEntity asset, Instant preExistingBefore) {
+        if (preExistingBefore == null) {
+            return false;
+        }
+        if (asset == null || asset.getCreatedAt() == null) {
+            return true;
+        }
+        return asset.getCreatedAt().isBefore(preExistingBefore);
     }
 
     /**

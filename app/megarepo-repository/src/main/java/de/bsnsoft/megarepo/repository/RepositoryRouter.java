@@ -13,7 +13,10 @@ import de.bsnsoft.megarepo.core.format.FormatResponse.RedirectResponse;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
+import de.bsnsoft.megarepo.repository.firewall.FirewallBlockResponse;
 import de.bsnsoft.megarepo.repository.firewall.FirewallDownloadObserver;
+import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementService;
+import de.bsnsoft.megarepo.repository.firewall.FirewallEvaluation;
 import de.bsnsoft.megarepo.repository.firewall.FirewallRequestContext;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
 import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
@@ -52,6 +55,7 @@ public class RepositoryRouter {
     private final ActivityBroadcaster activityBroadcaster;
     private final NvdFirewallService nvdFirewallService;
     private final FirewallDownloadObserver firewallDownloadObserver;
+    private final FirewallEnforcementService firewallEnforcementService;
 
     public RepositoryRouter(
             RepositoryConfigService repositoryConfigService,
@@ -60,7 +64,8 @@ public class RepositoryRouter {
             AuditService auditService,
             ActivityBroadcaster activityBroadcaster,
             NvdFirewallService nvdFirewallService,
-            FirewallDownloadObserver firewallDownloadObserver) {
+            FirewallDownloadObserver firewallDownloadObserver,
+            FirewallEnforcementService firewallEnforcementService) {
         this.repositoryConfigService = repositoryConfigService;
         this.formatRegistry = formatRegistry;
         this.groupHandler = groupHandler;
@@ -68,6 +73,7 @@ public class RepositoryRouter {
         this.activityBroadcaster = activityBroadcaster;
         this.nvdFirewallService = nvdFirewallService;
         this.firewallDownloadObserver = firewallDownloadObserver;
+        this.firewallEnforcementService = firewallEnforcementService;
     }
 
     @RequestMapping(
@@ -112,10 +118,11 @@ public class RepositoryRouter {
                     };
         }
 
-        // The V8 NVD firewall still runs here, before the response is written,
-        // because it is the component that actually blocks. The Phase 1
-        // repository firewall deliberately does not join it at this point — see
-        // the observation hook after writeResponse below.
+        // Both firewalls run here, before the response is written, because this
+        // is the last point at which a refusal is still possible: once
+        // writeResponse has streamed the content, there is nothing left to
+        // withhold.
+        boolean firewallAlreadyEvaluated = false;
         if (formatResponse instanceof ContentResponse content) {
             String currentUser = currentUser(request);
             var nvdResult = nvdFirewallService.checkDownload(repo.id(), path, repoName, currentUser);
@@ -123,6 +130,40 @@ public class RepositoryRouter {
                 try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
                 writeNvdBlockResponse(response, nvdResult);
                 return;
+            }
+
+            // Repository firewall enforcement (osTicket #155155).
+            //
+            // A no-op unless the global enforcement switch is on AND this
+            // repository is in QUARANTINE mode; in every other case this returns
+            // NOT_ENFORCING without a query and the observation hook after
+            // writeResponse handles the download exactly as it did before.
+            //
+            // The call never throws by contract, and the catch is not redundancy
+            // for its own sake: "a firewall fault never costs a client its
+            // artifact" is a requirement, and a requirement that rests on a
+            // collaborator keeping a promise is one refactor away from false.
+            // Note the asymmetry — a fault here serves the artifact, because a
+            // broken firewall must fail towards availability. Only a *decided*
+            // block withholds anything.
+            FirewallEvaluation verdict;
+            try {
+                verdict = firewallEnforcementService.evaluate(
+                        repo.id(), repoName, path,
+                        new FirewallRequestContext(
+                                currentUser, clientIp(request), path, request.getMethod()));
+            } catch (RuntimeException e) {
+                log.warn("Repository firewall enforcement failed for {}/{} — the download was served",
+                        repoName, path, e);
+                verdict = null;
+            }
+            if (verdict != null) {
+                firewallAlreadyEvaluated = verdict.enforcementEvaluated();
+                if (verdict.blocked()) {
+                    try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
+                    writeFirewallBlockResponse(request, response, verdict);
+                    return;
+                }
             }
         }
 
@@ -136,29 +177,31 @@ public class RepositoryRouter {
             activityBroadcaster.broadcast(new ActivityEvent(
                     Instant.now(), user, "DOWNLOAD", repoName, path, repo.format(), content.contentLength(), durationMs, null));
 
-            // Repository firewall, Phase 1 — AUDIT only (osTicket #155155).
+            // Repository firewall observation — AUDIT (osTicket #155155).
             //
-            // Placed here, after writeResponse, on purpose. The design moves the
-            // evaluation hook ahead of the upstream fetch, but only because
-            // Phase 2 has to be able to refuse; Phase 1 never refuses anything,
-            // and evaluating something it cannot act on before the fetch would
-            // put a database round trip on the critical path of every download
-            // in exchange for nothing. Sitting behind the completed response is
+            // Skipped when enforcement already evaluated this download above:
+            // that path did the same lookup and recorded a richer row, and
+            // running both would double every violation for an enforcing
+            // repository.
+            //
+            // Placed here, after writeResponse, on purpose. Observation never
+            // refuses anything, and evaluating it before the fetch would put a
+            // database round trip on the critical path of every download in
+            // exchange for nothing. Sitting behind the completed response is
             // also the strongest available guarantee that AUDIT "serves anyway":
             // by the time this runs, the bytes are gone.
             //
-            // The call is void, non-blocking and exception-free by contract. The
-            // catch is not redundancy for its own sake: "a firewall fault never
-            // costs a client its artifact" is the requirement, and a requirement
-            // that depends on a collaborator keeping a promise is one refactor
-            // away from being false.
-            try {
-                firewallDownloadObserver.observeDownload(
-                        repo.id(), repoName, path,
-                        new FirewallRequestContext(user, ip, path, request.getMethod()));
-            } catch (RuntimeException e) {
-                log.warn("Repository firewall observation failed for {}/{} — the download was served",
-                        repoName, path, e);
+            // The call is void, non-blocking and exception-free by contract; the
+            // catch is the same belt-and-braces as above.
+            if (!firewallAlreadyEvaluated) {
+                try {
+                    firewallDownloadObserver.observeDownload(
+                            repo.id(), repoName, path,
+                            new FirewallRequestContext(user, ip, path, request.getMethod()));
+                } catch (RuntimeException e) {
+                    log.warn("Repository firewall observation failed for {}/{} — the download was served",
+                            repoName, path, e);
+                }
             }
         }
     }
@@ -459,6 +502,33 @@ public class RepositoryRouter {
 
     private void sendError(HttpServletResponse response, int status, String message) throws IOException {
         response.sendError(status, message);
+    }
+
+    /**
+     * Writes the repository firewall's 403.
+     *
+     * <p>Not {@code response.sendError}: that hands the response to the
+     * container's error page machinery, which replaces the body with HTML. The
+     * whole point of this response is the body — a developer staring at a failed
+     * {@code mvn package} has to be able to read why — so the status, headers and
+     * body are written directly. Shape is chosen from {@code Accept}: JSON for
+     * clients that asked for it (npm prints {@code body.error} verbatim), aligned
+     * plain text otherwise.
+     */
+    private void writeFirewallBlockResponse(
+            HttpServletRequest request, HttpServletResponse response, FirewallEvaluation verdict)
+            throws IOException {
+        boolean json = FirewallBlockResponse.prefersJson(request.getHeader("Accept"));
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType(FirewallBlockResponse.contentType(json));
+        FirewallBlockResponse.headers(verdict).forEach(response::setHeader);
+        String body = FirewallBlockResponse.body(verdict, json);
+        // HEAD carries the headers but no body, same as any other response.
+        if (!"HEAD".equalsIgnoreCase(request.getMethod())) {
+            response.getWriter().write(body);
+            response.getWriter().flush();
+        }
+        log.info("Repository firewall denied {}: {}", verdict.path(), FirewallBlockResponse.summary(verdict));
     }
 
     private void writeNvdBlockResponse(

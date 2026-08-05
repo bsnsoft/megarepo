@@ -631,6 +631,59 @@ Run it only after both the NVD sync and the advisory ingest have completed at
 least once. The report states the row counts of both stores before any of its
 own numbers, and refuses to draw a conclusion when one side is empty.
 
+### Repository Firewall — turning enforcement on
+
+Blocking is off until you switch it on, and it takes **two** switches:
+
+1. **The global master switch.** Ships off. While it is off, nothing is ever
+   blocked, whatever a single repository is set to. Set
+   `megarepo.firewall.enforcement.enabled` (env
+   `MEGAREPO_FIREWALL_ENFORCEMENT_ENABLED`) for a deployment-side default; once
+   the switch has been set through the API/UI, the stored value wins and the
+   property is ignored — the same layering `megarepo.outbound-proxy.*` uses.
+   Flipping it takes effect **without a restart**.
+2. **The repository's mode**, in `firewall_repository_config.mode`:
+   * `OFF` — not looked at.
+   * `AUDIT` — violations are recorded, every download is served.
+   * `QUARANTINE` — violations are recorded **and** blocking rules are honoured,
+     but only while the master switch is on.
+
+The master switch exists so that one mistyped repository mode cannot break every
+build against that repository, and so that "turn it off" is a single step when a
+policy turns out to be too strict.
+
+**Components already in the repository are never blocked.** When enforcement is
+switched on for the first time, MegaRepo records the moment. Anything stored
+before it — proxy cache entries, uploaded artifacts — is recorded as a violation
+but still served; only content pulled in afterwards is denied. Turning
+enforcement off and on again does not move that mark.
+
+**What the default policy blocks.** A repository with no policy assigned uses the
+policy named `Default`, which blocks a component when either applies:
+
+| Rule | Blocks when |
+|---|---|
+| `CVSS_THRESHOLD` | an advisory scores CVSS ≥ 9.0 (critical) |
+| `KNOWN_MALICIOUS` | an advisory flags the package as malicious (OSV `MAL-…`) |
+
+Both act only on advisories that named the package by purl (OSV, GHSA). NVD
+matches derived from a CPE product name are recorded but never block on their
+own, because two unrelated packages can share a product name. Set
+`"minConfidence": "HEURISTIC"` in a rule's `config` to change that. Rules with
+action `WARN` record and never block. The rule types `LICENSE`, `MIN_AGE`,
+`UNKNOWN_COMPONENT`, `TYPOSQUAT` and `NAMESPACE_CONFUSION` exist in the schema
+but are not implemented yet; a rule row of those types is ignored.
+
+**A blocked download** answers `403` with a readable body naming the component,
+the rule and the advisory ids, so the reason is visible in a Maven/npm build log
+rather than only in MegaRepo. The same facts are repeated in the
+`X-MegaRepo-Firewall-*` response headers for clients that hide error bodies.
+
+**If the firewall cannot answer in time** (`megarepo.firewall.enforcement.evaluation-timeout`,
+default 2s), the repository's `fail_mode` decides: `FAIL_OPEN` (the default)
+serves the artifact, `FAIL_CLOSED` denies it. Evaluation only reads the local
+database — no advisory feed is contacted on the download path.
+
 ---
 
 ## 6. Backup & Restore
