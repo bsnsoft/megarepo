@@ -78,9 +78,44 @@ public class ProxyFetchService {
         this.auditService = auditService;
     }
 
+    /**
+     * Per-request tuning for an upstream fetch.
+     *
+     * @param requestHeaders extra headers to send upstream. Formats use this to negotiate a
+     *                       cheaper representation — npm, for example, forwards the client's
+     *                       {@code Accept: application/vnd.npm.install-v1+json} so the registry
+     *                       returns the abbreviated packument instead of the full document.
+     * @param cachePath      the asset path the result is cached under. Defaults to the request
+     *                       path; formats override it when the same upstream path can yield
+     *                       different representations that must not overwrite each other.
+     */
+    public record FetchOptions(Map<String, String> requestHeaders, String cachePath) {
+
+        private static final FetchOptions DEFAULTS = new FetchOptions(Map.of(), null);
+
+        public static FetchOptions defaults() {
+            return DEFAULTS;
+        }
+
+        public FetchOptions {
+            requestHeaders = requestHeaders == null ? Map.of() : Map.copyOf(requestHeaders);
+        }
+
+        String cachePathOr(String requestPath) {
+            return cachePath == null || cachePath.isBlank() ? requestPath : cachePath;
+        }
+    }
+
     public Optional<FormatResponse> fetchAndCache(
             RepositoryConfig repo, String path, ComponentCoordinateExtractor extractor) {
-        String key = repo.id() + ":" + path;
+        return fetchAndCache(repo, path, extractor, FetchOptions.defaults());
+    }
+
+    public Optional<FormatResponse> fetchAndCache(
+            RepositoryConfig repo, String path, ComponentCoordinateExtractor extractor, FetchOptions options) {
+        FetchOptions effective = options == null ? FetchOptions.defaults() : options;
+        String cachePath = effective.cachePathOr(path);
+        String key = repo.id() + ":" + cachePath;
 
         CompletableFuture<CachedFetchResult> newFuture = new CompletableFuture<>();
         CompletableFuture<CachedFetchResult> existing = inFlightRequests.putIfAbsent(key, newFuture);
@@ -93,7 +128,7 @@ public class ProxyFetchService {
 
         // We are the fetching thread
         try {
-            Optional<FormatResponse> result = doFetchAndCache(repo, path, extractor);
+            Optional<FormatResponse> result = doFetchAndCache(repo, path, extractor, effective);
             CachedFetchResult cached = CachedFetchResult.from(result);
             newFuture.complete(cached);
             // Return a fresh response for this thread too (the original stream was consumed by from())
@@ -200,7 +235,8 @@ public class ProxyFetchService {
 
     @Transactional
     protected Optional<FormatResponse> doFetchAndCache(
-            RepositoryConfig repo, String path, ComponentCoordinateExtractor extractor) {
+            RepositoryConfig repo, String path, ComponentCoordinateExtractor extractor, FetchOptions options) {
+        String cachePath = options.cachePathOr(path);
         // Check blacklist before any remote fetch
         if (blacklistService.isBlacklisted(repo, path)) {
             log.info("Blacklisted artifact blocked for repo={} path={}", repo.name(), path);
@@ -218,7 +254,8 @@ public class ProxyFetchService {
         String fullUrl = remoteUrl.endsWith("/") ? remoteUrl + path : remoteUrl + "/" + path;
 
         try {
-            RemoteHttpClient.RemoteResponse response = fetchFromRemote(repo, fullUrl);
+            RemoteHttpClient.RemoteResponse response =
+                    fetchFromRemote(repo, fullUrl, options.requestHeaders());
 
             if (response.statusCode() == 404) {
                 closeQuietly(response.body());
@@ -263,7 +300,7 @@ public class ProxyFetchService {
 
             // Successful fetch - stream through digest, store blob, create asset
             long fetchStart = System.currentTimeMillis();
-            FormatResponse cached = cacheRemoteContent(repo, path, response, extractor);
+            FormatResponse cached = cacheRemoteContent(repo, cachePath, response, extractor);
             long fetchDuration = System.currentTimeMillis() - fetchStart;
 
             if (cached instanceof ContentResponse content) {
@@ -291,8 +328,12 @@ public class ProxyFetchService {
         }
     }
 
+    /**
+     * Returns the proxy repository's upstream base URL without a trailing slash.
+     * Formats need this to recognise (and rewrite) upstream URLs embedded in metadata.
+     */
     @SuppressWarnings("unchecked")
-    String getRemoteUrl(RepositoryConfig repo) {
+    public String getRemoteUrl(RepositoryConfig repo) {
         Object proxyObj = repo.attributes().get("proxy");
         if (proxyObj instanceof Map<?, ?> proxyMap) {
             Object url = proxyMap.get("remoteUrl");
@@ -307,20 +348,27 @@ public class ProxyFetchService {
 
     private RemoteHttpClient.RemoteResponse fetchFromRemote(
             RepositoryConfig repo, String fullUrl) throws IOException {
+        return fetchFromRemote(repo, fullUrl, Map.of());
+    }
+
+    private RemoteHttpClient.RemoteResponse fetchFromRemote(
+            RepositoryConfig repo, String fullUrl, Map<String, String> extraHeaders) throws IOException {
         Optional<ProxyAuth> auth = getProxyAuth(repo);
         Optional<RemoteHttpClient.HttpProxyConfig> httpProxy = getHttpProxyConfig(repo);
+        Map<String, String> headers = extraHeaders == null ? Map.of() : extraHeaders;
 
         if (auth.isPresent() && httpProxy.isPresent()) {
             ProxyAuth credentials = auth.get();
             return remoteHttpClient.fetchWithAuthViaProxy(
-                    fullUrl, credentials.username(), credentials.password(), httpProxy.get());
+                    fullUrl, credentials.username(), credentials.password(), httpProxy.get(), headers);
         } else if (auth.isPresent()) {
             ProxyAuth credentials = auth.get();
-            return remoteHttpClient.fetchWithAuth(fullUrl, credentials.username(), credentials.password());
+            return remoteHttpClient.fetchWithAuth(
+                    fullUrl, credentials.username(), credentials.password(), headers);
         } else if (httpProxy.isPresent()) {
-            return remoteHttpClient.fetchViaProxy(fullUrl, Map.of(), httpProxy.get());
+            return remoteHttpClient.fetchViaProxy(fullUrl, headers, httpProxy.get());
         }
-        return remoteHttpClient.fetch(fullUrl, Map.of());
+        return remoteHttpClient.fetch(fullUrl, headers);
     }
 
     @SuppressWarnings("unchecked")

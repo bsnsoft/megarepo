@@ -140,4 +140,110 @@ class RemoteHttpClientTest {
         field.setAccessible(true);
         assertNotNull(field.get(client));
     }
+
+    /**
+     * Upstream compression: the JDK HTTP client neither advertises nor decodes gzip on its own,
+     * which meant metadata was always transferred raw — an npm packument such as
+     * {@code @typescript-eslint/parser} is ~15 MB uncompressed versus ~2.9 MB gzipped
+     * (GitHub #1). These tests use a real loopback server, because the behaviour under test is
+     * the wire negotiation itself.
+     */
+    @Test
+    void fetch_advertisesGzipAndInflatesCompressedResponse() throws Exception {
+        String payload = "{\"name\":\"lodash\",\"versions\":{}}".repeat(200);
+        var recordedAcceptEncoding = new java.util.concurrent.atomic.AtomicReference<String>();
+
+        var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/pkg", exchange -> {
+            recordedAcceptEncoding.set(exchange.getRequestHeaders().getFirst("Accept-Encoding"));
+            byte[] compressed;
+            try (var bytes = new java.io.ByteArrayOutputStream();
+                    var gzip = new java.util.zip.GZIPOutputStream(bytes)) {
+                gzip.write(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                gzip.finish();
+                compressed = bytes.toByteArray();
+            }
+            exchange.getResponseHeaders().add("Content-Encoding", "gzip");
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, compressed.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(compressed);
+            }
+        });
+        server.start();
+
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/pkg";
+            RemoteHttpClient.RemoteResponse response = client.fetch(url, java.util.Map.of());
+
+            assertEquals(200, response.statusCode());
+            assertEquals("gzip", recordedAcceptEncoding.get(), "gzip must be advertised upstream");
+
+            String body = new String(
+                    response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(payload, body, "gzip body must be transparently inflated");
+
+            // The upstream Content-Length described the compressed payload and no longer
+            // matches the stream the caller reads.
+            assertEquals(-1, response.contentLength());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void fetch_uncompressedResponseIsPassedThroughUnchanged() throws Exception {
+        String payload = "{\"plain\":true}";
+
+        var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/plain", exchange -> {
+            byte[] bytes = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        });
+        server.start();
+
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/plain";
+            RemoteHttpClient.RemoteResponse response = client.fetch(url, java.util.Map.of());
+
+            assertEquals(200, response.statusCode());
+            assertEquals(
+                    payload,
+                    new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(payload.length(), response.contentLength());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void fetch_forwardsCallerSuppliedHeaders() throws Exception {
+        var recordedAccept = new java.util.concurrent.atomic.AtomicReference<String>();
+
+        var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/pkg", exchange -> {
+            recordedAccept.set(exchange.getRequestHeaders().getFirst("Accept"));
+            exchange.sendResponseHeaders(200, 2);
+            try (var out = exchange.getResponseBody()) {
+                out.write("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        });
+        server.start();
+
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/pkg";
+            client.fetch(url, java.util.Map.of("Accept", "application/vnd.npm.install-v1+json"));
+
+            assertEquals("application/vnd.npm.install-v1+json", recordedAccept.get());
+        } finally {
+            server.stop(0);
+        }
+    }
 }

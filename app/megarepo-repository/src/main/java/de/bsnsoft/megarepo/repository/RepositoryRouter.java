@@ -350,6 +350,29 @@ public class RepositoryRouter {
         }
     }
 
+    /**
+     * Reports whether a response body is worth compressing on the wire — i.e. whether it is
+     * one of the text-ish media types the servlet container will gzip. Mirrors the default
+     * {@code server.compression.mime-types} set.
+     */
+    static boolean isCompressibleContentType(String contentType) {
+        if (contentType == null) {
+            return false;
+        }
+        String type = contentType.toLowerCase(java.util.Locale.ROOT);
+        int separator = type.indexOf(';');
+        if (separator >= 0) {
+            type = type.substring(0, separator);
+        }
+        type = type.trim();
+        return type.startsWith("text/")
+                || type.equals("application/json")
+                || type.endsWith("+json")
+                || type.equals("application/xml")
+                || type.endsWith("+xml")
+                || type.equals("application/javascript");
+    }
+
     private void writeContentResponse(
             ContentResponse content, HttpServletRequest request, HttpServletResponse response)
             throws IOException {
@@ -366,7 +389,16 @@ public class RepositoryRouter {
         Map<String, String> checksums = content.checksums();
         if (checksums != null) {
             if (checksums.containsKey("sha1")) {
-                response.setHeader("ETag", "\"%s\"".formatted(checksums.get("sha1")));
+                // Tomcat refuses to gzip a response that carries a *strong* ETag, because
+                // compressing would change the byte-for-byte representation the strong
+                // validator promises. Text metadata (npm packuments, PyPI indexes, POMs)
+                // is exactly what benefits most from compression, so those get a weak
+                // validator instead — still usable for If-None-Match revalidation, but no
+                // longer a barrier to transfer encoding. Binary artifacts keep the strong
+                // ETag; they are already compressed and are not in Tomcat's
+                // compressible-mime-type list anyway. (GitHub #1)
+                String etag = "\"%s\"".formatted(checksums.get("sha1"));
+                response.setHeader("ETag", isCompressibleContentType(content.contentType()) ? "W/" + etag : etag);
                 response.setHeader("X-Checksum-Sha1", checksums.get("sha1"));
             }
             if (checksums.containsKey("md5")) {

@@ -17,7 +17,12 @@ public class NpmCoordinateExtractor implements ComponentCoordinateExtractor {
     private static final Pattern SCOPED_TARBALL_PATTERN =
             Pattern.compile("^(@[^/]+)/([^/]+)/-/\\2-(.+)\\.tgz$");
 
-    // Unscoped tarball: -/package-1.0.0.tgz
+    // Unscoped tarball in the registry layout used by npm itself and by proxied
+    // upstreams: package/-/package-1.0.0.tgz
+    private static final Pattern UNSCOPED_REGISTRY_TARBALL_PATTERN =
+            Pattern.compile("^([^@/][^/]*)/-/\\1-(.+)\\.tgz$");
+
+    // Unscoped tarball, short form: -/package-1.0.0.tgz
     // Version starts with a digit, so we match name greedily then "-" followed by digit-led version
     private static final Pattern UNSCOPED_TARBALL_PATTERN =
             Pattern.compile("^-/(.+)-(\\d.+)\\.tgz$");
@@ -40,6 +45,17 @@ public class NpmCoordinateExtractor implements ComponentCoordinateExtractor {
             String name = scopedMatcher.group(2);
             String version = scopedMatcher.group(3);
             return Optional.of(new ComponentCoordinates(scope, name, version, Map.of()));
+        }
+
+        // Try unscoped registry layout: name/-/name-version.tgz
+        // This is the form real npm registries use, so it is also the form that
+        // proxied tarball downloads arrive in. Without it, proxied unscoped
+        // packages get cached but never registered as components (GitHub #1).
+        Matcher registryMatcher = UNSCOPED_REGISTRY_TARBALL_PATTERN.matcher(normalized);
+        if (registryMatcher.matches()) {
+            String name = registryMatcher.group(1);
+            String version = registryMatcher.group(2);
+            return Optional.of(new ComponentCoordinates(null, name, version, Map.of()));
         }
 
         // Try unscoped tarball pattern: -/name-version.tgz
