@@ -2,13 +2,8 @@ package de.bsnsoft.megarepo.it;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
-import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
-import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -23,7 +18,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,40 +37,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NugetRepositoryIntegrationTest extends BaseIntegrationTest {
 
     private static final String REPO_NAME = "nuget-integration-test";
-    private static final String BLOB_STORE_NAME = "default";
-
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
-
-    @Autowired
-    private BlobStoreJpaRepository blobStoreJpaRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Find-or-create the fixture repository, then drop whatever a previous run pushed into
+     * it: NuGet treats a re-push of an existing version as a conflict, so a package left
+     * over from an earlier run would turn the {@code 201 CREATED} assertions into 409s.
+     */
     @BeforeEach
     void setUp() {
-        if (blobStoreJpaRepository.findById(BLOB_STORE_NAME).isEmpty()) {
-            var blobStore = new BlobStoreEntity();
-            blobStore.setName(BLOB_STORE_NAME);
-            blobStore.setType("file");
-            blobStore.setConfig(Map.of("path", "data/blobs/default"));
-            blobStore.setCreatedAt(Instant.now());
-            blobStore.setUpdatedAt(Instant.now());
-            blobStoreJpaRepository.save(blobStore);
-        }
-
-        if (repositoryJpaRepository.findByName(REPO_NAME).isEmpty()) {
-            var repo = new RepositoryEntity();
-            repo.setName(REPO_NAME);
-            repo.setFormat("nuget");
-            repo.setType("HOSTED");
-            repo.setOnline(true);
-            repo.setBlobStoreName(BLOB_STORE_NAME);
-            repo.setAttributes(Map.of());
-            repo.setCreatedAt(Instant.now());
-            repo.setUpdatedAt(Instant.now());
-            repositoryJpaRepository.save(repo);
-        }
+        ensureDefaultBlobStore();
+        purgeRepositoryContent(ensureRepository(REPO_NAME, "nuget", "HOSTED", Map.of()));
     }
 
     @Test

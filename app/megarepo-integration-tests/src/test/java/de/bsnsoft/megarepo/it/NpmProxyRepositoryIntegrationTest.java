@@ -5,27 +5,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
-import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
-import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
-import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
-import de.bsnsoft.megarepo.database.repository.ComponentJpaRepository;
-import de.bsnsoft.megarepo.database.repository.NegativeCacheJpaRepository;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -33,7 +22,6 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,17 +68,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Note on shared state: the Spring context and the PostgreSQL database are shared across all
  * integration-test classes and are never reset — not even between JVM runs, since the database is
- * external. Fixtures are therefore created defensively (find-or-create), the repository's
- * {@code remoteUrl} is rewritten to the stub's <em>current</em> port on every setup, and this
- * repository's cached assets/components are purged before each test so cache assertions describe
- * this run only.
+ * external. Fixtures are therefore created defensively with the {@link BaseIntegrationTest}
+ * helpers (find-or-create), the repository's {@code remoteUrl} is rewritten to the stub's
+ * <em>current</em> port on every setup, and this repository's cached assets/components are purged
+ * before each test so cache assertions describe this run only.
  */
 class NpmProxyRepositoryIntegrationTest extends BaseIntegrationTest {
 
     /** Deliberately not "npm-proxy": that name belongs to the repository seeded by FirstRunSetup. */
     private static final String REPO_NAME = "it-npm-proxy";
-
-    private static final String BLOB_STORE_NAME = "default";
 
     /** The media type npm and pnpm use to ask for the abbreviated packument. */
     private static final String ABBREVIATED_MEDIA_TYPE = "application/vnd.npm.install-v1+json";
@@ -108,24 +94,6 @@ class NpmProxyRepositoryIntegrationTest extends BaseIntegrationTest {
 
     private static HttpServer upstream;
     private static int upstreamPort;
-
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
-
-    @Autowired
-    private BlobStoreJpaRepository blobStoreJpaRepository;
-
-    @Autowired
-    private AssetJpaRepository assetJpaRepository;
-
-    @Autowired
-    private ComponentJpaRepository componentJpaRepository;
-
-    @Autowired
-    private NegativeCacheJpaRepository negativeCacheJpaRepository;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -269,41 +237,17 @@ class NpmProxyRepositoryIntegrationTest extends BaseIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        if (blobStoreJpaRepository.findById(BLOB_STORE_NAME).isEmpty()) {
-            var blobStore = new BlobStoreEntity();
-            blobStore.setName(BLOB_STORE_NAME);
-            blobStore.setType("file");
-            blobStore.setConfig(Map.of("path", "data/blobs/default"));
-            blobStore.setCreatedAt(Instant.now());
-            blobStore.setUpdatedAt(Instant.now());
-            blobStoreJpaRepository.save(blobStore);
-        }
+        ensureDefaultBlobStore();
 
         // Find-or-create: the row survives previous JVM runs, but the stub's port does not, so the
         // remoteUrl has to be re-pointed at the server that is actually listening right now.
-        RepositoryEntity repo = repositoryJpaRepository.findByName(REPO_NAME).orElseGet(() -> {
-            var created = new RepositoryEntity();
-            created.setName(REPO_NAME);
-            created.setCreatedAt(Instant.now());
-            return created;
-        });
-        repo.setFormat("npm");
-        repo.setType("PROXY");
-        repo.setOnline(true);
-        repo.setBlobStoreName(BLOB_STORE_NAME);
-        repo.setAttributes(Map.of("proxy", Map.of("remoteUrl", upstreamBaseUrl())));
-        repo.setUpdatedAt(Instant.now());
-        UUID repoId = repositoryJpaRepository.save(repo).getId();
+        UUID repoId = ensureRepository(
+                REPO_NAME, "npm", "PROXY", Map.of("proxy", Map.of("remoteUrl", upstreamBaseUrl())));
 
         // Cached packuments from an earlier run still reference the old stub port and would be
         // served (metadata TTL is 5 minutes) without any upstream call at all. Purge this
         // repository's cache so every test starts from a cold, current state.
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            assetJpaRepository.deleteAll(assetJpaRepository.findAllByRepositoryId(repoId));
-            componentJpaRepository.deleteAll(
-                    componentJpaRepository.findByRepositoryId(repoId, Pageable.unpaged()).getContent());
-            negativeCacheJpaRepository.deleteByRepositoryId(repoId);
-        });
+        purgeRepositoryContent(repoId);
 
         UPSTREAM_REQUESTS.clear();
     }
