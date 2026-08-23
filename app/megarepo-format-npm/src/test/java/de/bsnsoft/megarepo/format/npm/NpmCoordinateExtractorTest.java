@@ -110,6 +110,60 @@ class NpmCoordinateExtractorTest {
         assertEquals("18.0.0-beta.1", coords.version());
     }
 
+    /**
+     * The layout real registries use for unscoped packages — and therefore the layout a proxied
+     * tarball download arrives in. Missing this pattern meant proxied unscoped packages were
+     * cached but never registered as components, leaving the Browse tree empty (GitHub #1).
+     */
+    @Test
+    void extractFromPath_unscopedRegistryLayoutTarball() {
+        Optional<ComponentCoordinates> result = extractor.extractFromPath("lodash/-/lodash-4.17.21.tgz");
+
+        assertTrue(result.isPresent());
+        ComponentCoordinates coords = result.get();
+        assertNull(coords.namespace());
+        assertEquals("lodash", coords.name());
+        assertEquals("4.17.21", coords.version());
+    }
+
+    @Test
+    void extractFromPath_unscopedRegistryLayoutWithPrereleaseVersion() {
+        Optional<ComponentCoordinates> result = extractor.extractFromPath("react/-/react-18.0.0-beta.1.tgz");
+
+        assertTrue(result.isPresent());
+        ComponentCoordinates coords = result.get();
+        assertNull(coords.namespace());
+        assertEquals("react", coords.name());
+        assertEquals("18.0.0-beta.1", coords.version());
+    }
+
+    @Test
+    void extractFromPath_unscopedRegistryLayoutWithDottedName() {
+        Optional<ComponentCoordinates> result = extractor.extractFromPath("lodash.merge/-/lodash.merge-4.6.2.tgz");
+
+        assertTrue(result.isPresent());
+        ComponentCoordinates coords = result.get();
+        assertNull(coords.namespace());
+        assertEquals("lodash.merge", coords.name());
+        assertEquals("4.6.2", coords.version());
+    }
+
+    /**
+     * The directory segment and the filename stem must agree; a mismatch means the path was not
+     * produced by a registry and must not be turned into a bogus component.
+     */
+    @Test
+    void extractFromPath_mismatchedRegistryLayoutIsRejected() {
+        assertTrue(extractor.extractFromPath("lodash/-/underscore-1.0.0.tgz").isEmpty());
+    }
+
+    @Test
+    void extractFromPath_metadataPathHasNoCoordinates() {
+        assertTrue(extractor.extractFromPath("lodash").isEmpty());
+        assertTrue(extractor.extractFromPath("@scope/package").isEmpty());
+        assertTrue(extractor.extractFromPath(".npm-abbreviated/lodash").isEmpty());
+    }
+
     @Test
     void extractFromContent_delegatesToExtractFromPath() {
         Optional<ComponentCoordinates> result =
