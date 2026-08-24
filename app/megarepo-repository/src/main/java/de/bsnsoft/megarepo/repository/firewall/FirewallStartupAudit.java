@@ -92,9 +92,9 @@ public class FirewallStartupAudit {
             log.warn("""
                     Repository firewall: this configuration holds every new component, permanently.
                       megarepo.firewall.facts.enabled = false, so publication dates and declared
-                      licenses are never resolved. The configured rule(s) {} therefore report
-                      INDETERMINATE for every component, and the fail-closed repositor(y|ies) {}
-                      quarantine what cannot be decided under EVALUATION_INCOMPLETE. The
+                      licenses are never resolved. These rules therefore report INDETERMINATE for
+                      every component: {}. These fail-closed repositories quarantine what cannot
+                      be decided, under EVALUATION_INCOMPLETE: {}. The
                       re-evaluation sweep will find the same missing fact and hold them again.
                       Nothing will leave that queue on its own.
                       If that is intended, ignore this. Otherwise: switch the facts resolver on,

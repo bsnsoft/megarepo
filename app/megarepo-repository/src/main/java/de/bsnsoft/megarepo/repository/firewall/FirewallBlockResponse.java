@@ -357,8 +357,14 @@ public final class FirewallBlockResponse {
             out.append("  Violations :\n");
             for (FirewallRuleViolation violation : blocking) {
                 out.append("    - ").append(violation.ruleType().name())
-                        .append(" (").append(violation.action().name()).append("): ")
-                        .append(violation.reason()).append('\n');
+                        .append(" (").append(violation.action().name());
+                // Otherwise "MIN_AGE (BLOCK): no publication date yet" reads as
+                // though the rule found something, when it found nothing and the
+                // repository's fail mode is what withheld the artifact.
+                if (violation.undecided()) {
+                    out.append(", could not be decided");
+                }
+                out.append("): ").append(violation.reason()).append('\n');
                 if (!violation.advisoryIds().isEmpty()) {
                     out.append("      advisories: ")
                             .append(String.join(", ", violation.advisoryIds())).append('\n');

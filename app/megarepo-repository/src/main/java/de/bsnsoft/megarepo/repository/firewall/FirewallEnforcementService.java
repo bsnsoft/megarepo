@@ -475,9 +475,30 @@ public class FirewallEnforcementService {
      * <p>Neither does a decision taken by the quarantine short-circuit: the queue
      * entry <em>is</em> the record of it, it already counts the hits, and writing
      * a violation row per download of a held component would flood the log with
-     * the one thing that is already visible elsewhere.
+     * the one thing that is already visible elsewhere. Note that "has no
+     * findings" does not express this — an advisory naming the component is
+     * exactly the case where a held artifact is downloaded again and again — so
+     * the short-circuit is tested for directly.
      */
+    /**
+     * Whether the verdict came from an existing queue entry rather than from a
+     * policy run.
+     *
+     * <p>Recognised by the absence of violations next to a stored hold: every
+     * decision the engine reaches itself names at least one rule — the one that
+     * matched, or the one that could not decide — while
+     * {@link #decidedEarlier} answers from the entry alone and has no rules to
+     * name.
+     */
+    private static boolean takenFromTheQueue(FirewallDecision decision) {
+        FirewallDecision.Hold hold = decision.hold();
+        return hold != null && hold.quarantineId() != null && decision.violations().isEmpty();
+    }
+
     private void recordQuietly(FirewallEvaluation decided, FirewallRequestContext context) {
+        if (takenFromTheQueue(decided.decision())) {
+            return;
+        }
         if (!decided.hasFindings() && decided.decision().violations().isEmpty()) {
             return;
         }

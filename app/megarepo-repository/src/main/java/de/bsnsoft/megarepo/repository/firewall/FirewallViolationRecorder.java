@@ -247,6 +247,10 @@ public class FirewallViolationRecorder {
         header.put("ruleAction", violation.action().name());
         header.put("rule", violation.ruleType().name());
         header.put("ruleReason", violation.reason());
+        // "This rule matched" and "this rule could not tell" are different facts
+        // about the firewall's health, and an operator has to be able to query
+        // for the second one rather than grep the reason text for a phrase.
+        header.put("undecided", violation.undecided());
         header.put("preExisting", evaluation.preExisting());
         header.put("failModeApplied", decision.failModeApplied());
         if (decision.policyName() != null) {
