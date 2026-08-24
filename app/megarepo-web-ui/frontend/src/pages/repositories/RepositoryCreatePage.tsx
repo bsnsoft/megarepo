@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, NetworkError } from '../../api/client';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../auth/AuthContext';
 import FormatBadge from '../../components/FormatBadge';
 import TypeBadge from '../../components/TypeBadge';
 import type { CreateRepositoryRequest, Repository, RepositoryFormat, RepositoryType, BlobStore } from '../../types/api';
@@ -24,6 +25,19 @@ const TYPES: { value: RepositoryType; label: string; description: string }[] = [
 export default function RepositoryCreatePage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  /**
+   * Creating a repository is open to any logged-in account on purpose — the
+   * documented provisioning recipes do it with one — but `GET
+   * /api/v1/blobstores` behind the picker below is administrator-only, because
+   * a blob store's config carries its S3 credentials in clear text.
+   *
+   * So the page stays, and only the picker changes shape: an administrator
+   * chooses from the real list, everyone else types the store's name with the
+   * reason spelled out. Anything else would have been worse in one of two
+   * ways — firing a request that can only 403, or leaving a select whose
+   * single silent option pretends the instance has one blob store.
+   */
+  const { isAdmin } = useAuth();
 
   const [step, setStep] = useState<'recipe' | 'form'>('recipe');
   const [selectedFormat, setSelectedFormat] = useState<RepositoryFormat>('maven2');
@@ -47,8 +61,11 @@ export default function RepositoryCreatePage() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
 
   useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
     api.get<BlobStore[]>('/blobstores').then(setBlobStores).catch(() => {});
-  }, []);
+  }, [isAdmin]);
 
   // Fetch available repositories when group type is selected (filter by same format, exclude group repos)
   useEffect(() => {
@@ -211,19 +228,39 @@ export default function RepositoryCreatePage() {
               <label htmlFor="blob-store" className="block text-sm font-medium text-gray-700 mb-1.5">
                 Blob Store
               </label>
-              <select
-                id="blob-store"
-                value={blobStoreName}
-                onChange={(e) => setBlobStoreName(e.target.value)}
-                className="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors"
-              >
-                {blobStores.length === 0 && <option value="default">default</option>}
-                {blobStores.map((bs) => (
-                  <option key={bs.name} value={bs.name}>
-                    {bs.name} ({bs.type})
-                  </option>
-                ))}
-              </select>
+              {isAdmin ? (
+                <select
+                  id="blob-store"
+                  value={blobStoreName}
+                  onChange={(e) => setBlobStoreName(e.target.value)}
+                  className="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors"
+                >
+                  {blobStores.length === 0 && <option value="default">default</option>}
+                  {blobStores.map((bs) => (
+                    <option key={bs.name} value={bs.name}>
+                      {bs.name} ({bs.type})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    id="blob-store"
+                    type="text"
+                    value={blobStoreName}
+                    onChange={(e) => setBlobStoreName(e.target.value)}
+                    placeholder="default"
+                    required
+                    className="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white placeholder:text-gray-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors"
+                  />
+                  <span className="text-xs text-gray-500 mt-1 block">
+                    Listing the configured blob stores needs the administrator role, so this is a
+                    name field rather than a picker. A standard installation stores everything in{' '}
+                    <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">default</code>;
+                    leave it as it is unless an administrator gave you another name.
+                  </span>
+                </>
+              )}
             </div>
 
             {selectedType === 'proxy' && (

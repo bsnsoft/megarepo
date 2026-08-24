@@ -89,36 +89,62 @@ describe('Sidebar navigation', () => {
   });
 
   /**
-   * The system section is the mixed one: three screens any logged-in account
-   * can use, two that are administration. Gating the whole section would take
-   * away pages that work.
+   * The system section is the mixed one: the status page is open to any
+   * logged-in account, the other four are not. Gating the whole section would
+   * take away a page that works; leaving it whole would offer four that cannot.
    */
   it('leaves a non-administrator the system pages that are not restricted', () => {
     renderSidebar(viewerToken(), '/admin/status');
 
     expect(screen.getByRole('link', { name: 'Status' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Audit Log' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'HTTP' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'License' })).not.toBeInTheDocument();
+    for (const label of ['Tasks', 'Audit Log', 'HTTP', 'License']) {
+      expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
+    }
   });
 
   it('shows the system administration in full to an administrator', () => {
     renderSidebar(adminToken(), '/admin/status');
 
+    expect(screen.getByRole('link', { name: 'Status' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Audit Log' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'HTTP' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'License' })).toBeInTheDocument();
   });
 
-  it('leaves the browse navigation and the repository section alone', () => {
+  /**
+   * The repository section is the other mixed one, and the reason the whole
+   * list is per-route rather than per-section. `/admin/repositories` stays: the
+   * server keeps reading, creating and updating a repository open to any
+   * logged-in account, because the documented provisioning recipes need it.
+   * The three storage and routing screens beside it do not.
+   */
+  it('leaves the browse navigation and the repository list alone', () => {
     renderSidebar(viewerToken(), '/admin/repositories');
 
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Browse' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Search' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Upload' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Repository' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Repositories' })).toBeInTheDocument();
+  });
+
+  it('hides the storage and routing screens from an account without the role', () => {
+    renderSidebar(viewerToken(), '/admin/repositories');
+
+    for (const label of ['Blob Stores', 'Cleanup Policies', 'Routing Rules']) {
+      expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
+    }
+  });
+
+  it('shows the repository section in full to an administrator', () => {
+    renderSidebar(adminToken(), '/admin/repositories');
+
+    expect(screen.getByRole('link', { name: 'Repositories' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Blob Stores' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Cleanup Policies' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Routing Rules' })).toBeInTheDocument();
   });
 
   /**

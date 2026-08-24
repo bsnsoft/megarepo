@@ -5,6 +5,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import FormatBadge from '../../components/FormatBadge';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../auth/AuthContext';
 import type { Component, Asset } from '../../types/api';
 
 function formatBytes(bytes: number): string {
@@ -46,7 +47,20 @@ function ChecksumRow({ label, value }: { label: string; value: string | null }) 
   );
 }
 
-function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (asset: Asset) => void }) {
+function AssetCard({
+  asset,
+  onDelete,
+  canDelete,
+}: {
+  asset: Asset;
+  onDelete: (asset: Asset) => void;
+  /**
+   * Whether to offer the delete control. `DELETE /api/v1/assets/*` is
+   * administrator-only; download and the metadata below are not, which is the
+   * whole reason this card stays on a page any logged-in account can open.
+   */
+  canDelete: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const hasChecksums = asset.checksumMd5 || asset.checksumSha1 || asset.checksumSha256 || asset.checksumSha512;
 
@@ -101,17 +115,19 @@ function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (asset: Asset)
               Checksums
             </button>
           )}
-          <button
-            onClick={() => onDelete(asset)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-white border border-gray-200 hover:bg-red-50 rounded-md transition-colors"
-            title="Delete asset"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-            </svg>
-            Delete
-          </button>
+          {canDelete && (
+            <button
+              onClick={() => onDelete(asset)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-white border border-gray-200 hover:bg-red-50 rounded-md transition-colors"
+              title="Delete asset"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+              </svg>
+              Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -144,6 +160,15 @@ export default function ComponentDetailPage() {
   const { repositoryName, componentId } = useParams<{ repositoryName: string; componentId: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  /**
+   * This page is the ordinary user's: browsing a component and downloading its
+   * assets is what a read-only account is for, so the route stays open and the
+   * two destructive controls are hidden instead. `DELETE /api/v1/components/*`
+   * and `DELETE /api/v1/assets/*` are administrator-only in `SecurityConfig`,
+   * and that is the check that counts — this only keeps a non-administrator
+   * from being offered a button whose one outcome is a permission error.
+   */
+  const { isAdmin } = useAuth();
 
   const [component, setComponent] = useState<Component | null>(null);
   const [loading, setLoading] = useState(true);
@@ -258,17 +283,19 @@ export default function ComponentDetailPage() {
             {component.group ? `${component.group} / ` : ''}
             {component.name}
           </h1>
-          <button
-            onClick={() => setDeleteComponentOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-sm font-medium rounded-md transition-colors shrink-0"
-            title="Delete component"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-            </svg>
-            Delete component
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setDeleteComponentOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-sm font-medium rounded-md transition-colors shrink-0"
+              title="Delete component"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+              </svg>
+              Delete component
+            </button>
+          )}
         </div>
       </div>
 
@@ -313,7 +340,12 @@ export default function ComponentDetailPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {component.assets.map((asset) => (
-            <AssetCard key={asset.id} asset={asset} onDelete={setDeleteAssetTarget} />
+            <AssetCard
+              key={asset.id}
+              asset={asset}
+              onDelete={setDeleteAssetTarget}
+              canDelete={isAdmin}
+            />
           ))}
         </div>
       )}
