@@ -151,6 +151,9 @@ public class FirewallPolicyEvaluator {
         List<FirewallRuleViolation> violations = new ArrayList<>();
         boolean refusedOutright = false;
         FirewallQuarantineReason holdReason = null;
+        // The first rule that could not decide, whatever the fail mode says about it.
+        String undecided = null;
+        // The first one that therefore holds the component — fail-closed, unexempted.
         String undecidable = null;
 
         for (FirewallRuleSettings ruleSettings : applicable) {
@@ -172,12 +175,20 @@ public class FirewallPolicyEvaluator {
                 continue;
             }
 
-            if (outcome.indeterminate() && undecidable == null && settings.failsClosed()
-                    && exemptionFor(context, ruleSettings.ruleType()).isEmpty()) {
-                // Only under FAIL_CLOSED is the answer worth a query: fail-open
-                // serves either way, and the exemption lookup is the one thing
-                // here that costs an index read.
-                undecidable = outcome.reason();
+            if (outcome.indeterminate()) {
+                if (undecided == null) {
+                    undecided = outcome.reason();
+                }
+                // An exemption covering the rule also covers its indecision: if
+                // the operator has already decided this component may pass
+                // MIN_AGE, holding it because MIN_AGE cannot yet tell would deny
+                // exactly what they approved. Only worth the query under
+                // FAIL_CLOSED — fail-open serves either way, and the exemption
+                // lookup is the one thing here that costs an index read.
+                if (undecidable == null && settings.failsClosed()
+                        && exemptionFor(context, ruleSettings.ruleType()).isEmpty()) {
+                    undecidable = outcome.reason();
+                }
             }
         }
 
@@ -203,6 +214,10 @@ public class FirewallPolicyEvaluator {
                     policyName,
                     violations,
                     FirewallDecision.Hold.pending(FirewallQuarantineReason.EVALUATION_INCOMPLETE));
+        }
+        if (undecided != null) {
+            log.debug("Firewall could not decide about {} in {} ({}); fail-open — serving it",
+                    context.componentKey(), context.repositoryName(), undecided);
         }
         if (!violations.isEmpty() && violations.stream().anyMatch(FirewallRuleViolation::exempted)) {
             return FirewallDecision.exempted(policyId, policyName, violations);
