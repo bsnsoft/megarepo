@@ -63,6 +63,7 @@ public class FirewallUploadGate {
     private final FirewallEnforcementSettingsService enforcementSettings;
     private final FirewallEvaluationService evaluationService;
     private final FirewallUploadEvaluator uploadEvaluator;
+    private final FirewallViolationRecorder recorder;
     private final AssetJpaRepository assets;
     private final ComponentJpaRepository components;
 
@@ -70,11 +71,13 @@ public class FirewallUploadGate {
             FirewallEnforcementSettingsService enforcementSettings,
             FirewallEvaluationService evaluationService,
             FirewallUploadEvaluator uploadEvaluator,
+            FirewallViolationRecorder recorder,
             AssetJpaRepository assets,
             ComponentJpaRepository components) {
         this.enforcementSettings = enforcementSettings;
         this.evaluationService = evaluationService;
         this.uploadEvaluator = uploadEvaluator;
+        this.recorder = recorder;
         this.assets = assets;
         this.components = components;
     }
@@ -121,7 +124,7 @@ public class FirewallUploadGate {
                 return notEnforcing(repository, path, settings);
             }
 
-            return uploadEvaluator.evaluate(
+            FirewallEvaluation verdict = uploadEvaluator.evaluate(
                     repository.id(),
                     repository.name(),
                     repository.type(),
@@ -129,12 +132,45 @@ public class FirewallUploadGate {
                     component,
                     asset.map(AssetEntity::getChecksumSha256).orElse(null),
                     context);
+            record(verdict, context);
+            return verdict;
 
         } catch (RuntimeException e) {
             log.warn("Repository firewall upload evaluation failed for {}/{} — the upload was kept",
                     repository == null ? "?" : repository.name(), path, e);
             return notEnforcing(repository, path, settings)
                     .withOutcome(FirewallEvaluation.Outcome.FAILED);
+        }
+    }
+
+    /**
+     * Writes what the policy concluded about the publish to
+     * {@code firewall_violation}.
+     *
+     * <p>{@link FirewallUploadEvaluator} decides and holds; it does not record.
+     * Doing it here keeps the audit trail for an upload the same shape, the same
+     * table and the same de-duplication as the one for a download — an operator
+     * asking "what has this policy refused?" should not have to know which
+     * direction the artifact was travelling.
+     *
+     * <p>Inline rather than off a pool thread, unlike the download path. A
+     * download is recorded after the bytes are already on the wire, so the write
+     * must not delay the client; a publish is still being answered, the client is
+     * already paying for a blob write, and a refused upload whose reason never
+     * reached the log is the one case where the record matters most.
+     *
+     * <p>A failure changes nothing: the verdict has been reached, and a log write
+     * must not be able to turn a refusal into an acceptance.
+     */
+    private void record(FirewallEvaluation verdict, FirewallRequestContext context) {
+        if (!verdict.enforcementEvaluated()) {
+            return;
+        }
+        try {
+            recorder.recordDecision(verdict, context);
+        } catch (RuntimeException e) {
+            log.warn("Could not record the firewall decision for the upload {}/{}",
+                    verdict.repositoryName(), verdict.path(), e);
         }
     }
 

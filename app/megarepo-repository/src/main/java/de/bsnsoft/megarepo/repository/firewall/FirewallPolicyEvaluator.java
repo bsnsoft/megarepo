@@ -1,6 +1,7 @@
 package de.bsnsoft.megarepo.repository.firewall;
 
 import de.bsnsoft.megarepo.core.firewall.FirewallAction;
+import de.bsnsoft.megarepo.core.firewall.FirewallMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
 import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 import de.bsnsoft.megarepo.database.entity.FirewallPolicyEntity;
@@ -132,7 +133,13 @@ public class FirewallPolicyEvaluator {
      */
     @Transactional(readOnly = true)
     public FirewallDecision evaluate(FirewallRuleContext context) {
-        FirewallRepositorySettings settings = context.settings();
+        // A context with no repository settings only reaches here from a caller
+        // that built one by hand. FAIL_OPEN is what "unstated" means everywhere
+        // else in the firewall, and FirewallRepositorySettings.fallback gives
+        // exactly that.
+        FirewallRepositorySettings settings = context.settings() == null
+                ? FirewallRepositorySettings.fallback(FirewallMode.QUARANTINE)
+                : context.settings();
         FirewallPolicyEntity policy = resolvePolicy(settings);
         UUID policyId = policy == null ? null : policy.getId();
         String policyName = policy == null ? BUILT_IN_POLICY_NAME : policy.getName();

@@ -209,10 +209,6 @@ public final class FirewallBlockResponse {
         String more = blocking.size() > 1
                 ? " (%d further rule(s) also matched.)".formatted(blocking.size() - 1)
                 : "";
-        String held = decision.held()
-                ? " It is being held rather than refused outright%s"
-                        .formatted(nextLookSentence(decision.hold()))
-                : "";
         return "MegaRepo firewall %s %s from %s: %s — %s.%s%s%s".formatted(
                 decision.held() ? "is holding" : "blocked",
                 component,
@@ -221,7 +217,7 @@ public final class FirewallBlockResponse {
                 first.reason(),
                 ids,
                 more,
-                held);
+                decision.held() ? nextLookSentence(decision.hold()) : "");
     }
 
     /** Where the artifact came from, as one phrase. */

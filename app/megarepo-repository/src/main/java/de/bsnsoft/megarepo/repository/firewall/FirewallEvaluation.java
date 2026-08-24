@@ -125,9 +125,10 @@ public record FirewallEvaluation(
 
         /**
          * The component resolved to a hash or to nothing, so no advisory feed can
-         * be queried for it. Nothing is recorded: "no data about this component"
-         * is the {@code UNKNOWN_COMPONENT} policy rule's input, and that rule is
-         * not implemented.
+         * be queried for it. The observation path records nothing for it; the
+         * enforcement path still evaluates, because "no data about this
+         * component" is the {@code UNKNOWN_COMPONENT} rule's input and that rule
+         * exists as of Phase 2.
          */
         UNRESOLVABLE_IDENTITY,
 

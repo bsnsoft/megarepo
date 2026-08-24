@@ -12,6 +12,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -107,7 +108,7 @@ public class FirewallStartupAudit {
     }
 
     private List<String> failClosedQuarantineRepositories() {
-        List<String> names = new java.util.ArrayList<>();
+        List<String> names = new ArrayList<>();
         for (FirewallRepositoryConfigEntity config : repositoryConfigs.findAll()) {
             if (config.getMode() == FirewallMode.QUARANTINE
                     && config.getFailMode() == FirewallFailMode.FAIL_CLOSED) {

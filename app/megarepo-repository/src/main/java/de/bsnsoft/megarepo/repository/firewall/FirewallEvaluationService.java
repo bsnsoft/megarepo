@@ -199,8 +199,11 @@ public class FirewallEvaluationService {
         ComponentIdentity identity = purlBuilder.identify(component.get(), sha256);
 
         if (!identity.isResolvable()) {
-            // Hash or unidentified: no advisory feed indexes those. Recording
-            // it is the UNKNOWN_COMPONENT rule's job, which is not implemented.
+            // Hash or unidentified: no advisory feed indexes those, so there is
+            // nothing to look up and the observation path records nothing. The
+            // enforcement path does carry on from here — an unidentifiable
+            // component is exactly what the UNKNOWN_COMPONENT rule is about, and
+            // that rule exists as of Phase 2.
             return new FirewallEvaluation(
                     repositoryId, repositoryName, path, settings, identity, List.of(),
                     FirewallEvaluation.Outcome.UNRESOLVABLE_IDENTITY,
