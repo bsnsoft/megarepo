@@ -43,7 +43,25 @@ public class SecurityConfig {
      */
     public static final String FIREWALL_ADMIN_PATH_PATTERN = "/api/v1/admin/firewall/**";
 
-    /** Role required for {@link #FIREWALL_ADMIN_PATH_PATTERN}, without the {@code ROLE_} prefix. */
+    /**
+     * The older NVD-based firewall surface, restricted to the same {@code nx-admin}
+     * as {@link #FIREWALL_ADMIN_PATH_PATTERN}.
+     *
+     * <p>It lives under {@code /api/v1/security/**} for historical reasons rather
+     * than under the admin prefix, which is exactly how it escaped notice: no
+     * matcher named it, so it fell through to the blanket
+     * {@code /api/v1/** -> authenticated()} and every logged-in account could read
+     * the vulnerability inventory, edit the whitelist and switch the firewall off.
+     * Same data, same controls, same blast radius as the newer surface — so the
+     * same role, and a separate constant so that the rule and the endpoints stay
+     * visibly tied together.
+     */
+    public static final String NVD_FIREWALL_PATH_PATTERN = "/api/v1/security/nvd-firewall/**";
+
+    /**
+     * Role required for {@link #FIREWALL_ADMIN_PATH_PATTERN} and
+     * {@link #NVD_FIREWALL_PATH_PATTERN}, without the {@code ROLE_} prefix.
+     */
     public static final String FIREWALL_ADMIN_ROLE = "nx-admin";
 
     @Bean
@@ -97,6 +115,13 @@ public class SecurityConfig {
                         // rule belongs in the chain. Role ids reach the security
                         // context as ROLE_<id>, hence "nx-admin" from V2's seed.
                         .requestMatchers(FIREWALL_ADMIN_PATH_PATTERN)
+                        .hasRole(FIREWALL_ADMIN_ROLE)
+                        // Same reasoning for the NVD surface, which sits under the
+                        // /api/v1/security prefix instead. Both rules have to stand
+                        // ahead of the blanket /api/v1/** -> authenticated() below;
+                        // the first matching rule wins, so a later, broader entry
+                        // never tightens an earlier one.
+                        .requestMatchers(NVD_FIREWALL_PATH_PATTERN)
                         .hasRole(FIREWALL_ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()
