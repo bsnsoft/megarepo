@@ -23,6 +23,10 @@ import SslCertificatesPage from './pages/security/SslCertificatesPage';
 import AnonymousAccessPage from './pages/security/AnonymousAccessPage';
 import NvdFirewallPage from './pages/security/NvdFirewallPage';
 import RepositoryFirewallPage from './pages/security/RepositoryFirewallPage';
+import QuarantineQueuePage from './pages/security/firewall/QuarantineQueuePage';
+import PolicyListPage from './pages/security/firewall/PolicyListPage';
+import PolicyEditorPage from './pages/security/firewall/PolicyEditorPage';
+import ExemptionsPage from './pages/security/firewall/ExemptionsPage';
 import StatusPage from './pages/system/StatusPage';
 import TasksPage from './pages/system/TasksPage';
 import AuditLogPage from './pages/system/AuditLogPage';
@@ -72,6 +76,10 @@ export default function App() {
               <Route path="/admin/anonymous" element={<AnonymousAccessPage />} />
               <Route path="/admin/nvd-firewall" element={<NvdFirewallPage />} />
               <Route path="/admin/firewall" element={<RepositoryFirewallPage />} />
+              <Route path="/admin/firewall/quarantine" element={<QuarantineQueuePage />} />
+              <Route path="/admin/firewall/policies" element={<PolicyListPage />} />
+              <Route path="/admin/firewall/policies/:id" element={<PolicyEditorPage />} />
+              <Route path="/admin/firewall/exemptions" element={<ExemptionsPage />} />
 
               {/* Administration - System */}
               <Route path="/admin/status" element={<StatusPage />} />
