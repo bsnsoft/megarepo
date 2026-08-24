@@ -3,9 +3,13 @@ package de.bsnsoft.megarepo.repository.firewall;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
 import de.bsnsoft.megarepo.core.firewall.FirewallAction;
+import de.bsnsoft.megarepo.core.firewall.FirewallComponentKeyKind;
+import de.bsnsoft.megarepo.core.firewall.FirewallExemptionScope;
+import de.bsnsoft.megarepo.core.firewall.FirewallExemptionState;
 import de.bsnsoft.megarepo.core.firewall.FirewallFailMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
+import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineState;
 import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
 import de.bsnsoft.megarepo.database.entity.AssetEntity;
@@ -15,9 +19,12 @@ import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallPolicyRuleJpaRepository;
 import de.bsnsoft.megarepo.repository.advisory.AdvisoryLookupService;
+import de.bsnsoft.megarepo.repository.firewall.exemption.ExemptionService;
+import de.bsnsoft.megarepo.repository.firewall.exemption.FirewallExemption;
 import de.bsnsoft.megarepo.repository.firewall.facts.ComponentFactsService;
 import de.bsnsoft.megarepo.repository.firewall.identity.ComponentIdentity;
 import de.bsnsoft.megarepo.repository.firewall.identity.PurlBuilder;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.FirewallQuarantineEntry;
 import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRule;
 import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleContext;
@@ -64,6 +71,7 @@ class FirewallUploadEvaluatorTest {
     private static final String NAME = "maven-releases";
     private static final String PATH = "com/acme/util/1.0.0/util-1.0.0.jar";
     private static final String KEY = "pkg:maven/com.acme/util@1.0.0";
+    private static final Instant NEXT_LOOK = Instant.parse("2026-02-01T00:11:00Z");
     private static final FirewallRequestContext CONTEXT =
             new FirewallRequestContext("release-bot", "10.0.0.7", PATH, "PUT");
 
@@ -76,6 +84,7 @@ class FirewallUploadEvaluatorTest {
     @Mock private PurlBuilder purlBuilder;
     @Mock private QuarantineService quarantine;
     @Mock private ComponentFactsService facts;
+    @Mock private ExemptionService exemptions;
 
     private final UUID policyId = UUID.randomUUID();
     private StubRule rule;
@@ -246,6 +255,130 @@ class FirewallUploadEvaluatorTest {
         assertThat(verdict.decision().policyName()).isEqualTo("built-in default");
     }
 
+    // ── Exemptions (osTicket #155155) ───────────────────────────────────
+
+    @Test
+    @DisplayName("an approved exemption lets the publish through, and says which one did")
+    void anApprovedExemptionAllowsThePublish() {
+        rule = StubRule.matching(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK, false);
+        givenRules(rule(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK));
+        UUID exemptionId = givenApprovedExemption(FirewallRuleType.KNOWN_MALICIOUS);
+
+        FirewallEvaluation verdict = evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT);
+
+        assertThat(verdict.blocked())
+                .as("the operator approved this component for this repository; a firewall that "
+                        + "serves it on download and refuses it on publish is telling them their "
+                        + "own decision only counts in one direction")
+                .isFalse();
+        assertThat(verdict.decision().reason()).isEqualTo(FirewallDecision.Reason.EXEMPTED);
+        assertThat(verdict.decision().exemptionIds())
+                .as("which exemption spent itself here has to be in the audit trail, or the log "
+                        + "shows a BLOCK rule that matched next to a publish that succeeded")
+                .containsExactly(exemptionId);
+        verify(quarantine, never()).quarantine(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("an exemption for another rule does not cover this one")
+    void anExemptionForAnotherRuleDoesNotCover() {
+        rule = StubRule.matching(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK, false);
+        givenRules(rule(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK));
+        // Approved for MIN_AGE only: "exempt from the age rule" is not "exempt".
+        givenApprovedExemption(FirewallRuleType.MIN_AGE);
+
+        assertThat(evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT).blocked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("an exemption store that cannot be read refuses rather than publishes")
+    void anUnreadableExemptionStoreDoesNotOpenTheGate() {
+        rule = StubRule.matching(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK, false);
+        givenRules(rule(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK));
+        when(exemptions.findApplicable(any(), any(), any(FirewallRuleType.class), any()))
+                .thenThrow(new IllegalStateException("exemption index unreachable"));
+
+        assertThat(evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT).blocked())
+                .as("refusing a publish somebody had permission for is recoverable; publishing "
+                        + "one nobody approved is not")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("a fail-closed rule that cannot decide is covered by the exemption too")
+    void anExemptionAlsoCoversARuleThatCannotDecide() {
+        rule = StubRule.indeterminate(FirewallRuleType.MIN_AGE);
+        givenRules(rule(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK));
+        when(evaluationService.resolveSettings(REPOSITORY))
+                .thenReturn(settings(FirewallMode.QUARANTINE, FirewallFailMode.FAIL_CLOSED));
+        givenApprovedExemption(FirewallRuleType.MIN_AGE);
+
+        FirewallEvaluation verdict = evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT);
+
+        assertThat(verdict.blocked())
+                .as("if the operator has already decided this component may pass MIN_AGE, holding "
+                        + "it because MIN_AGE cannot yet tell denies exactly what they approved")
+                .isFalse();
+        verify(quarantine, never()).quarantine(any(), any(), any());
+    }
+
+    // ── The queue's decisions apply to a publish too ─────────────────────
+
+    @Test
+    @DisplayName("a released quarantine entry lets the re-publish through without running the rules")
+    void aReleasedEntryLetsTheRepublishThrough() {
+        rule = StubRule.matching(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK, true);
+        givenRules(rule(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK));
+        when(quarantine.find(REPOSITORY, KEY)).thenReturn(Optional.of(entry(
+                FirewallQuarantineState.RELEASED, FirewallQuarantineReason.MIN_AGE_NOT_MET)));
+
+        FirewallEvaluation verdict = evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT);
+
+        assertThat(verdict.blocked())
+                .as("the release is somebody's decision; re-deriving it on the publisher's retry "
+                        + "would overturn it on the one request that was waiting for it")
+                .isFalse();
+        assertThat(verdict.decision().reason())
+                .isEqualTo(FirewallDecision.Reason.QUARANTINE_RELEASED);
+        assertThat(rule.seen).as("and the rules did not run again").isNull();
+    }
+
+    @Test
+    @DisplayName("a still-held entry refuses the re-publish and counts the attempt")
+    void aHeldEntryRefusesTheRepublish() {
+        rule = StubRule.notMatching(FirewallRuleType.MIN_AGE);
+        givenRules(rule(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK));
+        FirewallQuarantineEntry held =
+                entry(FirewallQuarantineState.QUARANTINED, FirewallQuarantineReason.MIN_AGE_NOT_MET);
+        when(quarantine.find(REPOSITORY, KEY)).thenReturn(Optional.of(held));
+
+        FirewallEvaluation verdict = evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT);
+
+        assertThat(verdict.blocked()).isTrue();
+        assertThat(verdict.decision().reason()).isEqualTo(FirewallDecision.Reason.QUARANTINED);
+        verify(quarantine).recordHit(org.mockito.ArgumentMatchers.eq(held.id()), any());
+    }
+
+    @Test
+    @DisplayName("a held publish carries the stored entry, so the 403 can say when it is looked at again")
+    void aHeldPublishReportsTheStoredEntry() {
+        rule = StubRule.matching(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK, true);
+        givenRules(rule(FirewallRuleType.MIN_AGE, FirewallAction.BLOCK));
+        FirewallQuarantineEntry stored =
+                entry(FirewallQuarantineState.QUARANTINED, FirewallQuarantineReason.MIN_AGE_NOT_MET);
+        when(quarantine.quarantine(any(), any(), any())).thenReturn(Optional.of(stored));
+
+        FirewallEvaluation verdict = evaluator().evaluate(candidate(RepositoryType.HOSTED), CONTEXT);
+
+        assertThat(verdict.decision().reason())
+                .as("held, not plainly blocked: a publish that will succeed by itself in eleven "
+                        + "minutes is a wait, and the download path has always said so")
+                .isEqualTo(FirewallDecision.Reason.QUARANTINED);
+        assertThat(verdict.decision().hold()).isNotNull();
+        assertThat(verdict.decision().hold().quarantineId()).isEqualTo(stored.id());
+        assertThat(verdict.decision().hold().nextEvaluationAt()).isEqualTo(NEXT_LOOK);
+    }
+
     @Test
     @DisplayName("the rule sees an upload as an upload")
     void ruleContextSaysUpload() {
@@ -261,15 +394,51 @@ class FirewallUploadEvaluatorTest {
 
     // ------------------------------------------------------------------
 
+    /**
+     * The evaluator over the <em>real</em> shared assembly.
+     *
+     * <p>Not a mock of it, deliberately. The whole point of osTicket #155155 is
+     * that the publish path runs the same decision code as the download path, and
+     * a test that stubbed the assembly out would pass just as happily against the
+     * hand-rolled second assembly that caused the bug.
+     */
     private FirewallUploadEvaluator evaluator() {
-        return new FirewallUploadEvaluator(
-                evaluationService, enforcementSettings, policies, policyRules,
+        FirewallPolicyEvaluator policy = new FirewallPolicyEvaluator(
+                policies, policyRules,
                 new FirewallRuleRegistry(rule == null ? List.of() : List.of(rule)),
-                advisories, assets, purlBuilder, quarantine, provider(facts));
+                provider(exemptions));
+        return new FirewallUploadEvaluator(
+                evaluationService, enforcementSettings,
+                new FirewallDecisionAssembly(policy, quarantine, provider(facts)),
+                advisories, assets, purlBuilder);
     }
 
     private void givenRules(FirewallPolicyRuleEntity... rules) {
         when(policyRules.findByPolicyIdAndEnabledTrue(policyId)).thenReturn(List.of(rules));
+    }
+
+    /** One live, approved, repository- and rule-scoped exemption for this component. */
+    private UUID givenApprovedExemption(FirewallRuleType ruleType) {
+        UUID id = UUID.randomUUID();
+        FirewallExemption exemption = new FirewallExemption(
+                id, KEY, FirewallComponentKeyKind.PURL, FirewallExemptionScope.VERSION,
+                REPOSITORY, ruleType, List.of(), FirewallExemptionState.APPROVED,
+                null, null, "the fix is not released yet", "release-bot",
+                Instant.parse("2026-02-01T00:00:00Z"), "security-lead",
+                Instant.parse("2026-02-01T00:00:00Z"), "signed off for one sprint");
+        when(exemptions.findApplicable(
+                org.mockito.ArgumentMatchers.eq(REPOSITORY), any(), org.mockito.ArgumentMatchers.eq(ruleType), any()))
+                .thenReturn(Optional.of(exemption));
+        return id;
+    }
+
+    private static FirewallQuarantineEntry entry(
+            FirewallQuarantineState state, FirewallQuarantineReason reason) {
+        return new FirewallQuarantineEntry(
+                UUID.randomUUID(), REPOSITORY, NAME, KEY, PATH, state, reason, null, null,
+                Map.of(), Instant.parse("2026-02-01T00:00:00Z"),
+                Instant.parse("2026-02-01T00:00:00Z"), 3,
+                Instant.parse("2026-02-01T00:00:00Z"), NEXT_LOOK, null, null, null, null);
     }
 
     private static FirewallPolicyRuleEntity rule(FirewallRuleType type, FirewallAction action) {

@@ -1,42 +1,26 @@
 package de.bsnsoft.megarepo.repository.firewall;
 
-import de.bsnsoft.megarepo.core.firewall.FirewallAction;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
-import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
-import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
 import de.bsnsoft.megarepo.database.entity.AssetEntity;
 import de.bsnsoft.megarepo.database.entity.ComponentEntity;
-import de.bsnsoft.megarepo.database.entity.FirewallPolicyEntity;
-import de.bsnsoft.megarepo.database.entity.FirewallPolicyRuleEntity;
 import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
-import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
-import de.bsnsoft.megarepo.database.repository.FirewallPolicyRuleJpaRepository;
 import de.bsnsoft.megarepo.repository.advisory.AdvisoryFinding;
 import de.bsnsoft.megarepo.repository.advisory.AdvisoryLookupService;
-import de.bsnsoft.megarepo.repository.firewall.facts.ComponentFacts;
-import de.bsnsoft.megarepo.repository.firewall.facts.ComponentFactsService;
 import de.bsnsoft.megarepo.repository.firewall.identity.ComponentIdentity;
 import de.bsnsoft.megarepo.repository.firewall.identity.PurlBuilder;
-import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
-import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleContext;
-import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleOutcome;
-import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleRegistry;
-import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Judges an upload into a hosted repository, the way the enforcement path judges
- * a download.
+ * a download — and now, literally, with the same code.
  *
  * <h2>Why uploads are evaluated at all</h2>
  *
@@ -46,6 +30,29 @@ import java.util.UUID;
  * while its uploads are not is a repository with an unlocked back door. The
  * customer asked for hosted uploads to be evaluated, and this is that
  * evaluation.
+ *
+ * <h2>What this class does, after osTicket #155155</h2>
+ *
+ * It answers one question the download path answers differently — <em>what
+ * component is being written, and was this path already here?</em> — and hands
+ * everything else to {@link FirewallDecisionAssembly}. The first version of this
+ * class assembled its own verdict, and the predictable happened: it had no
+ * exemption step, so an operator could approve an exemption, watch the component
+ * download, and watch the identical publish be refused. Copying the exemption
+ * lookup in here would have fixed the symptom and kept the cause — two decision
+ * assemblies that only agree while somebody remembers to edit both.
+ *
+ * <p>So what is left here is the part that really is upload-shaped:
+ *
+ * <ul>
+ *   <li>the identity comes from the {@link ComponentEntity} the format handler
+ *       has just written, because the layout grammar for a publish lives in the
+ *       format module and nowhere else;</li>
+ *   <li>{@code upload=true} reaches the rules, so a rule that reads differently
+ *       when something is being published can;</li>
+ *   <li>and the grandfathering question is asked of the stored asset rather than
+ *       of an inspection, since the asset is being written as we look at it.</li>
+ * </ul>
  *
  * <h2>What this class is not</h2>
  *
@@ -77,54 +84,26 @@ public class FirewallUploadEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(FirewallUploadEvaluator.class);
 
-    /**
-     * The rules applied when no policy row exists at all.
-     *
-     * <p>The same two the download path falls back to, and for the same reason:
-     * V16 seeds a default policy, so reaching this means somebody deleted it, and
-     * an armed repository that silently allows every publish is the one outcome
-     * the operator who armed it would not expect. Keeping the two paths in step
-     * matters more than the three lines it costs — an upload allowed by a
-     * fallback the download path would have refused is a hole with a plausible
-     * explanation.
-     */
-    private static final List<FirewallRuleSettings> BUILT_IN_RULES = List.of(
-            FirewallRuleSettings.of(FirewallRuleType.CVSS_THRESHOLD, FirewallAction.BLOCK,
-                    java.util.Map.of("minScore", 9.0)),
-            FirewallRuleSettings.of(FirewallRuleType.KNOWN_MALICIOUS, FirewallAction.BLOCK));
-
     private final FirewallEvaluationService evaluationService;
     private final FirewallEnforcementSettingsService enforcementSettings;
-    private final FirewallPolicyJpaRepository policies;
-    private final FirewallPolicyRuleJpaRepository policyRules;
-    private final FirewallRuleRegistry registry;
+    private final FirewallDecisionAssembly assembly;
     private final AdvisoryLookupService advisories;
     private final AssetJpaRepository assets;
     private final PurlBuilder purlBuilder;
-    private final QuarantineService quarantine;
-    private final ObjectProvider<ComponentFactsService> facts;
 
     public FirewallUploadEvaluator(
             FirewallEvaluationService evaluationService,
             FirewallEnforcementSettingsService enforcementSettings,
-            FirewallPolicyJpaRepository policies,
-            FirewallPolicyRuleJpaRepository policyRules,
-            FirewallRuleRegistry registry,
+            FirewallDecisionAssembly assembly,
             AdvisoryLookupService advisories,
             AssetJpaRepository assets,
-            PurlBuilder purlBuilder,
-            QuarantineService quarantine,
-            ObjectProvider<ComponentFactsService> facts) {
+            PurlBuilder purlBuilder) {
         this.evaluationService = evaluationService;
         this.enforcementSettings = enforcementSettings;
-        this.policies = policies;
-        this.policyRules = policyRules;
-        this.registry = registry;
+        this.assembly = assembly;
         this.advisories = advisories;
         this.assets = assets;
         this.purlBuilder = purlBuilder;
-        this.quarantine = quarantine;
-        this.facts = facts;
     }
 
     /**
@@ -176,7 +155,8 @@ public class FirewallUploadEvaluator {
                 return notEnforcing(candidate.repositoryId(), candidate.repositoryName(),
                         candidate.path(), settings);
             }
-            return decide(candidate, settings, context);
+            return assembly.decide(
+                    inspect(candidate, settings), candidate.repositoryType(), true, context);
 
         } catch (RuntimeException e) {
             log.warn("Repository firewall upload evaluation failed for {}/{} — the upload was allowed",
@@ -218,134 +198,43 @@ public class FirewallUploadEvaluator {
 
     // ------------------------------------------------------------------
 
-    private FirewallEvaluation decide(
-            UploadCandidate candidate,
-            FirewallRepositorySettings settings,
-            FirewallRequestContext context) {
-
-        if (isPreExisting(candidate)) {
-            // Re-publishing a path whose asset predates the moment enforcement
-            // was switched on. The customer's grandfathering rule does not stop
-            // at downloads: an operator flipping the switch must not turn a
-            // working release job into a failing one.
-            FirewallEvaluation evaluation = new FirewallEvaluation(
-                    candidate.repositoryId(), candidate.repositoryName(), candidate.path(),
-                    settings, candidate.identity(), List.of(),
-                    FirewallEvaluation.Outcome.CLEAN, true,
-                    FirewallDecision.preExisting(null, null, List.of()));
-            return evaluation;
-        }
-
-        FirewallPolicyEntity policy = resolvePolicy(settings);
-        UUID policyId = policy == null ? null : policy.getId();
-        String policyName = policy == null ? "built-in default" : policy.getName();
-        List<FirewallRuleSettings> rules = policyId == null
-                ? BUILT_IN_RULES
-                : toSettings(policyRules.findByPolicyIdAndEnabledTrue(policyId));
+    /**
+     * What is known about the component before anything is judged — the publish
+     * side's answer to {@link FirewallEvaluationService#inspect}.
+     *
+     * <p>The two differ in where the identity comes from and in nothing else. A
+     * download reads the stored asset and its component row; a publish is handed
+     * the component the format handler extracted while writing, because that path
+     * grammar lives in the format module. Everything downstream — advisories,
+     * facts, rules, exemptions, fail mode, quarantine — sees the same shape either
+     * way, which is the point.
+     *
+     * <p>{@code UNRESOLVABLE_IDENTITY} is not a reason to stop: a component whose
+     * coordinates could not be built is exactly what {@code UNKNOWN_COMPONENT}
+     * is about, and an armed repository should be able to refuse a publish it
+     * cannot identify. Only the advisory lookup is skipped, because no feed
+     * indexes a bare digest.
+     */
+    private FirewallEvaluation inspect(
+            UploadCandidate candidate, FirewallRepositorySettings settings) {
 
         ComponentIdentity identity = candidate.identity();
         List<AdvisoryFinding> findings =
                 identity.isResolvable() ? advisories.findAdvisories(identity) : List.of();
 
-        FirewallRuleContext ruleContext = new FirewallRuleContext(
-                candidate.repositoryId(),
-                candidate.repositoryName(),
-                candidate.repositoryType(),
-                candidate.path(),
-                identity,
-                findings,
-                lookupFacts(identity),
-                settings,
-                true,
-                false,
-                Instant.now());
-
-        List<FirewallRuleViolation> violations = new ArrayList<>();
-        FirewallQuarantineReason holdReason = null;
-        String indeterminate = null;
-
-        for (FirewallRuleSettings ruleSettings : rules) {
-            FirewallRuleOutcome outcome = registry.evaluate(ruleContext, ruleSettings);
-
-            if (outcome.indeterminate() && indeterminate == null) {
-                indeterminate = outcome.reason();
-            }
-            if (!outcome.matched()) {
-                continue;
-            }
-            violations.add(outcome.violation());
-            if (ruleSettings.blocks() && holdReason == null) {
-                holdReason = registry.find(ruleSettings.ruleType())
-                        .filter(implementation -> implementation.quarantineOnMatch())
-                        .map(implementation -> implementation.quarantineReason())
-                        .orElse(null);
-            }
-        }
-
-        boolean blocks = violations.stream().anyMatch(FirewallRuleViolation::blocks);
-        if (blocks) {
-            FirewallEvaluation refused = new FirewallEvaluation(
-                    candidate.repositoryId(), candidate.repositoryName(), candidate.path(),
-                    settings, identity, findings, FirewallEvaluation.Outcome.MATCHED, false,
-                    FirewallDecision.blocked(policyId, policyName, violations));
-            if (holdReason != null) {
-                hold(refused, holdReason, context);
-            }
-            return refused;
-        }
-
-        if (indeterminate != null && settings.failsClosed()) {
-            FirewallEvaluation refused = new FirewallEvaluation(
-                    candidate.repositoryId(), candidate.repositoryName(), candidate.path(),
-                    settings, identity, findings, FirewallEvaluation.Outcome.UNAVAILABLE, false,
-                    FirewallDecision.unavailable(true));
-            hold(refused, FirewallQuarantineReason.EVALUATION_INCOMPLETE, context);
-            return refused;
+        FirewallEvaluation.Outcome outcome;
+        if (!identity.isResolvable()) {
+            outcome = FirewallEvaluation.Outcome.UNRESOLVABLE_IDENTITY;
+        } else {
+            outcome = findings.isEmpty()
+                    ? FirewallEvaluation.Outcome.CLEAN
+                    : FirewallEvaluation.Outcome.MATCHED;
         }
 
         return new FirewallEvaluation(
                 candidate.repositoryId(), candidate.repositoryName(), candidate.path(),
-                settings, identity, findings,
-                findings.isEmpty() ? FirewallEvaluation.Outcome.CLEAN : FirewallEvaluation.Outcome.MATCHED,
-                false,
-                FirewallDecision.allowed(policyId, policyName, violations));
-    }
-
-    /**
-     * Records the hold, so a refused publish shows up in the queue with a reason
-     * rather than only as a 403 in somebody's CI log.
-     *
-     * <p>Quarantining an upload holds the <em>component</em>, not stored bytes —
-     * nothing was published. When the entry is released the publisher retries and
-     * succeeds, which is the same shape as a held download becoming servable.
-     * {@link QuarantineService#quarantine} decides for itself whether an entry is
-     * written at all: it is off when quarantine is disabled, and it never holds a
-     * pre-existing component.
-     */
-    private void hold(
-            FirewallEvaluation evaluation,
-            FirewallQuarantineReason reason,
-            FirewallRequestContext context) {
-        try {
-            quarantine.quarantine(evaluation, reason, context);
-        } catch (RuntimeException e) {
-            log.warn("Could not record the quarantine entry for the refused upload {}/{}",
-                    evaluation.repositoryName(), evaluation.path(), e);
-        }
-    }
-
-    private ComponentFacts lookupFacts(ComponentIdentity identity) {
-        ComponentFactsService service = facts.getIfAvailable();
-        if (service == null) {
-            return ComponentFacts.unknown(identity.key());
-        }
-        try {
-            ComponentFacts looked = service.lookup(identity);
-            return looked == null ? ComponentFacts.unknown(identity.key()) : looked;
-        } catch (RuntimeException e) {
-            log.debug("Component facts lookup failed for {}", identity.key(), e);
-            return ComponentFacts.unknown(identity.key());
-        }
+                settings, identity, findings, outcome,
+                isPreExisting(candidate), FirewallDecision.notEvaluated());
     }
 
     /**
@@ -357,6 +246,15 @@ public class FirewallUploadEvaluator {
      * would make a re-publish of a long-standing artifact fail the first time an
      * operator arms the firewall, which is precisely the class of breakage the
      * watermark exists to prevent.
+     *
+     * <p>Read here rather than taken from
+     * {@link FirewallEnforcementSettingsService#enforcingSince()} through the
+     * download path's helper, because the two answer a subtly different question
+     * about a missing row. A download that finds no asset is looking at something
+     * that is not there and grandfathers it; a publish that finds no asset is
+     * looking at coordinates that are genuinely new, and calling those
+     * "pre-existing" would exempt every first publish from the policy — the
+     * opposite of what arming the firewall is for.
      */
     private boolean isPreExisting(UploadCandidate candidate) {
         Instant watermark = enforcementSettings.enforcingSince();
@@ -368,28 +266,6 @@ public class FirewallUploadEvaluator {
         return asset.map(AssetEntity::getCreatedAt)
                 .map(createdAt -> createdAt.isBefore(watermark))
                 .orElse(false);
-    }
-
-    private static List<FirewallRuleSettings> toSettings(List<FirewallPolicyRuleEntity> rules) {
-        List<FirewallRuleSettings> settings = new ArrayList<>(rules.size());
-        for (FirewallPolicyRuleEntity rule : rules) {
-            settings.add(new FirewallRuleSettings(
-                    rule.getId(), rule.getRuleType(), rule.getAction(), rule.getConfig(),
-                    rule.isEnabled()));
-        }
-        return settings;
-    }
-
-    private FirewallPolicyEntity resolvePolicy(FirewallRepositorySettings settings) {
-        if (settings != null && settings.policyId() != null) {
-            Optional<FirewallPolicyEntity> assigned = policies.findById(settings.policyId());
-            if (assigned.isPresent()) {
-                return assigned.get();
-            }
-            log.warn("Repository firewall policy {} is assigned but does not exist; "
-                    + "falling back to the default policy", settings.policyId());
-        }
-        return policies.findByIsDefaultTrue().orElse(null);
     }
 
     private static FirewallEvaluation notEnforcing(

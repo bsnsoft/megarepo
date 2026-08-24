@@ -229,6 +229,26 @@ public record FirewallDecision(
     }
 
     /**
+     * Whether this verdict came from an existing queue entry rather than from a
+     * policy run.
+     *
+     * <p>Recognised by the absence of violations next to a stored hold: every
+     * decision the engine reaches itself names at least one rule — the one that
+     * matched, or the one that could not decide — while the quarantine
+     * short-circuit answers from the entry alone and has no rules to name.
+     *
+     * <p>Both request paths use it to decide against writing a violation row: the
+     * queue entry <em>is</em> the record, and it already counts the hits, so a row
+     * per request for a held component would flood the log with the one thing
+     * that is already visible elsewhere. "Has no findings" does not express this —
+     * an advisory naming the component is exactly the case where a held artifact
+     * is asked for again and again.
+     */
+    public boolean fromQuarantineQueue() {
+        return hold != null && hold.quarantineId() != null && violations.isEmpty();
+    }
+
+    /**
      * The rules that actually withheld the artifact.
      *
      * <p>An exempted violation is not among them: it matched, it is recorded, and
