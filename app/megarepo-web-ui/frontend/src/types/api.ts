@@ -348,6 +348,13 @@ export interface FirewallRepositoryState {
   configured: boolean;
   violations: number;
   updatedAt: string | null;
+  /**
+   * Assigned policy (Phase 2, B2). Optional because a server that predates the
+   * policy assignment endpoint sends neither — which is not the same as "no
+   * policy assigned". `undefined` ⇒ unknown, `null` ⇒ the instance default.
+   */
+  policyId?: string | null;
+  policyName?: string | null;
 }
 
 export interface FirewallStateSummary {
@@ -363,6 +370,13 @@ export interface FirewallOverview {
   violationWindowDays: number;
   summary: FirewallStateSummary;
   repositories: FirewallRepositoryState[];
+  /**
+   * `megarepo.firewall.facts.enabled`. Optional: older servers do not report it.
+   * Only an explicit `false` may be rendered as "facts are off" — see
+   * `FactsDisabledBanner`, which stays silent on `undefined` rather than
+   * claiming a state it has not been told.
+   */
+  factsEnabled?: boolean;
 }
 
 export interface FirewallViolation {
