@@ -4,21 +4,26 @@ import de.bsnsoft.megarepo.core.exception.NotFoundException;
 import de.bsnsoft.megarepo.core.exception.ValidationException;
 import de.bsnsoft.megarepo.core.firewall.FirewallEffectiveState;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
+import de.bsnsoft.megarepo.core.firewall.FirewallFailMode;
 import de.bsnsoft.megarepo.database.entity.FirewallEnforcementSettingsEntity;
+import de.bsnsoft.megarepo.database.entity.FirewallPolicyEntity;
 import de.bsnsoft.megarepo.database.entity.FirewallRepositoryConfigEntity;
 import de.bsnsoft.megarepo.database.entity.FirewallViolationEntity;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
 import de.bsnsoft.megarepo.database.repository.FirewallEnforcementSettingsJpaRepository;
+import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.rest.dto.common.PageResponse;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallEnforcementUpdateXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallEnforcementXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallOverviewXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallRepositoryModeUpdateXO;
+import de.bsnsoft.megarepo.rest.dto.firewall.FirewallRepositoryPolicyUpdateXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallRepositoryStateXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallStateSummaryXO;
 import de.bsnsoft.megarepo.rest.dto.firewall.FirewallViolationXO;
@@ -43,9 +48,12 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -146,6 +154,8 @@ public class FirewallAdminController {
     private final FirewallRepositoryConfigJpaRepository configRepo;
     private final FirewallViolationJpaRepository violationRepo;
     private final RepositoryJpaRepository repositoryRepo;
+    private final FirewallPolicyJpaRepository policyRepo;
+    private final QuarantineService quarantine;
     private final FirewallAuditProperties auditProperties;
 
     /**
@@ -154,6 +164,11 @@ public class FirewallAdminController {
      * @param enforcementRepo read only, and only for the audit metadata
      *     ({@code updated_at}, {@code updated_by}) the service does not expose.
      *     The switch's value never comes from here — see the class comment.
+     * @param policyRepo read only: resolves the name of the policy a repository
+     *     is assigned, and confirms that a policy being assigned exists
+     * @param quarantine notified when a repository's policy changes, so that
+     *     components held under the old one are re-evaluated at once instead of
+     *     at the next sweep
      */
     public FirewallAdminController(
             FirewallEnforcementSettingsService enforcementSettings,
@@ -161,12 +176,16 @@ public class FirewallAdminController {
             FirewallRepositoryConfigJpaRepository configRepo,
             FirewallViolationJpaRepository violationRepo,
             RepositoryJpaRepository repositoryRepo,
+            FirewallPolicyJpaRepository policyRepo,
+            QuarantineService quarantine,
             FirewallAuditProperties auditProperties) {
         this.enforcementSettings = enforcementSettings;
         this.enforcementRepo = enforcementRepo;
         this.configRepo = configRepo;
         this.violationRepo = violationRepo;
         this.repositoryRepo = repositoryRepo;
+        this.policyRepo = policyRepo;
+        this.quarantine = quarantine;
         this.auditProperties = auditProperties;
     }
 
@@ -198,8 +217,11 @@ public class FirewallAdminController {
             counts.put(row.getRepositoryId(), row.getViolations());
         }
 
+        Map<UUID, String> policyNames = policyNames();
+
         List<FirewallRepositoryStateXO> repositories = repositoryRepo.findAll().stream()
-                .map(repository -> toXO(repository, configs.get(repository.getId()), enabled, counts))
+                .map(repository ->
+                        toXO(repository, configs.get(repository.getId()), enabled, counts, policyNames))
                 .sorted(Comparator.comparing(FirewallRepositoryStateXO::repositoryName))
                 .toList();
 
@@ -306,18 +328,165 @@ public class FirewallAdminController {
                 currentUser(),
                 FirewallEffectiveState.resolve(enabled, saved.getMode()));
 
-        Instant since = Instant.now().minus(Duration.ofDays(VIOLATION_WINDOW_DAYS));
-        Map<UUID, Long> counts = new HashMap<>();
-        for (var row : violationRepo.countByRepositorySince(since)) {
-            counts.put(row.getRepositoryId(), row.getViolations());
+        return ResponseEntity.ok(toXO(repository, saved, enabled, violationCounts(), policyNames()));
+    }
+
+    /**
+     * Assign a policy and a fail mode to one repository.
+     *
+     * <p>Separate from {@link #setRepositoryMode} on purpose: the mode is the
+     * dangerous call — it is what arms a repository — while assigning a policy to
+     * one that is merely observing changes nothing anybody can see. Folding both
+     * into one body would either put a confirmation prompt in front of a harmless
+     * change or take it away from a dangerous one.
+     *
+     * <p><b>An assigned policy replaces the global default; it does not stack on
+     * top of it.</b> {@code policyId: null} therefore means "fall back to the
+     * default", which is a statement rather than an omission —
+     * {@code failMode: null}, by contrast, leaves the fail mode as it is, because
+     * this endpoint has no business resetting a setting the caller did not
+     * mention.
+     *
+     * <p>Confirmed with the same typed phrase {@link #setRepositoryMode} uses,
+     * and for the same reason — but only when the repository is <em>currently
+     * enforcing</em>, where swapping the policy underneath it changes what the
+     * next download is refused for.
+     */
+    @PutMapping("/repositories/{repositoryId}/policy")
+    public ResponseEntity<FirewallRepositoryStateXO> setRepositoryPolicy(
+            @PathVariable UUID repositoryId,
+            @Valid @RequestBody FirewallRepositoryPolicyUpdateXO request) {
+
+        RepositoryEntity repository = repositoryRepo
+                .findById(repositoryId)
+                .orElseThrow(() -> new NotFoundException("Repository not found: " + repositoryId));
+
+        rejectPolicyOnGroup(repository, request);
+
+        if (request.policyId() != null && policyRepo.findById(request.policyId()).isEmpty()) {
+            throw new NotFoundException("Firewall policy not found: " + request.policyId());
         }
 
-        return ResponseEntity.ok(toXO(repository, saved, enabled, counts));
+        Optional<FirewallRepositoryConfigEntity> existing = configRepo.findById(repositoryId);
+        UUID previousPolicy = existing.map(FirewallRepositoryConfigEntity::getPolicyId).orElse(null);
+        FirewallFailMode previousFailMode =
+                existing.map(FirewallRepositoryConfigEntity::getFailMode).orElse(null);
+        FirewallMode mode = existing
+                .map(FirewallRepositoryConfigEntity::getMode)
+                .orElse(auditProperties.defaultMode());
+
+        boolean changesPolicy = !Objects.equals(previousPolicy, request.policyId());
+        boolean changesFailMode = request.failMode() != null && request.failMode() != previousFailMode;
+        boolean enforcing = enforcementSettings.enforcementEnabled() && mode == FirewallMode.QUARANTINE;
+        if (enforcing && (changesPolicy || changesFailMode)) {
+            requireConfirmation(request.confirmation(), requiredPolicyConfirmation(repository.getName()));
+        }
+
+        FirewallRepositoryConfigEntity config = existing.orElseGet(() -> {
+            FirewallRepositoryConfigEntity fresh = new FirewallRepositoryConfigEntity();
+            fresh.setRepositoryId(repositoryId);
+            // The instance-wide default, not the entity's own: creating the row
+            // here must not change what the repository does, and the entity
+            // defaults to AUDIT while an unconfigured instance defaults to OFF.
+            fresh.setMode(auditProperties.defaultMode());
+            fresh.setCreatedAt(Instant.now());
+            return fresh;
+        });
+        config.setPolicyId(request.policyId());
+        if (request.failMode() != null) {
+            config.setFailMode(request.failMode());
+        }
+        config.setUpdatedAt(Instant.now());
+        FirewallRepositoryConfigEntity saved = configRepo.save(config);
+
+        log.info(
+                "Repository firewall policy for '{}' set to {} (fail mode {}) by {}",
+                repository.getName(),
+                saved.getPolicyId() == null ? "the global default" : saved.getPolicyId(),
+                saved.getFailMode(),
+                currentUser());
+
+        if (changesPolicy) {
+            // Components held in this repository were judged by the policy it is
+            // leaving; the ones it is joining may have held the same component
+            // elsewhere. Scheduling both for re-evaluation only marks them — the
+            // sweep still decides — so the cost of being generous here is a
+            // little work and never a wrong release.
+            for (UUID affected : affectedPolicies(previousPolicy, request.policyId())) {
+                quarantine.invalidatePolicy(affected);
+            }
+        }
+
+        boolean enabled = enforcementSettings.enforcementEnabled();
+        return ResponseEntity.ok(toXO(repository, saved, enabled, violationCounts(), policyNames()));
     }
 
     /** The phrase that arms {@code repositoryName}. */
     public static String requiredConfirmation(String repositoryName) {
         return "QUARANTINE " + repositoryName;
+    }
+
+    /** The phrase that confirms a policy change on {@code repositoryName}. */
+    public static String requiredPolicyConfirmation(String repositoryName) {
+        return "CHANGE POLICY " + repositoryName;
+    }
+
+    /**
+     * The policies whose held components this assignment can have changed the
+     * verdict for.
+     *
+     * <p>A null side means "the global default", which is a real policy with real
+     * quarantine entries — resolving it here is what keeps a repository moving
+     * off the default from leaving its components held by a policy it no longer
+     * uses.
+     */
+    private Set<UUID> affectedPolicies(UUID previousPolicy, UUID newPolicy) {
+        Set<UUID> affected = new LinkedHashSet<>();
+        UUID defaultPolicy = null;
+        if (previousPolicy == null || newPolicy == null) {
+            defaultPolicy = policyRepo.findByIsDefaultTrue()
+                    .map(FirewallPolicyEntity::getId)
+                    .orElse(null);
+        }
+        affected.add(previousPolicy == null ? defaultPolicy : previousPolicy);
+        affected.add(newPolicy == null ? defaultPolicy : newPolicy);
+        affected.remove(null);
+        return affected;
+    }
+
+    /**
+     * A group holds no components, so a policy set here would decide nothing —
+     * the same reason a mode set here would (see {@link #rejectModeOnGroup}).
+     *
+     * <p>Clearing an assignment is allowed: an installation that stored one
+     * before this rule existed has to be able to get rid of it, and
+     * {@code policyId: null} is already the state a group is in.
+     */
+    private static void rejectPolicyOnGroup(
+            RepositoryEntity repository, FirewallRepositoryPolicyUpdateXO request) {
+
+        if (!GROUP_TYPE.equalsIgnoreCase(repository.getType())) {
+            return;
+        }
+        if (request.policyId() == null && request.failMode() == null) {
+            return;
+        }
+        throw new ValidationException(
+                "'" + repository.getName() + "' is a group repository: it routes to its members and "
+                        + "holds no components of its own, so a firewall policy set here would never "
+                        + "be applied. Assign the policy to the member repositories instead — "
+                        + "downloads through this group are already evaluated against whichever "
+                        + "member resolves them.");
+    }
+
+    /** Violations per repository over the reporting window. */
+    private Map<UUID, Long> violationCounts() {
+        Instant since = Instant.now().minus(Duration.ofDays(VIOLATION_WINDOW_DAYS));
+        Map<UUID, Long> counts = new HashMap<>();
+        for (var row : violationRepo.countByRepositorySince(since)) {
+            counts.put(row.getRepositoryId(), row.getViolations());
+        }
+        return counts;
     }
 
     /**
@@ -399,7 +568,8 @@ public class FirewallAdminController {
             RepositoryEntity repository,
             FirewallRepositoryConfigEntity config,
             boolean enforcementEnabled,
-            Map<UUID, Long> violationCounts) {
+            Map<UUID, Long> violationCounts,
+            Map<UUID, String> policyNames) {
 
         FirewallMode mode = config != null ? config.getMode() : auditProperties.defaultMode();
         // A group's own mode governs nothing (see rejectModeOnGroup), so its
@@ -407,6 +577,7 @@ public class FirewallAdminController {
         // is refused now, but an installation that stored one before this rule
         // existed must not keep being told it is BLOCKING when it is not.
         FirewallMode governing = GROUP_TYPE.equalsIgnoreCase(repository.getType()) ? FirewallMode.OFF : mode;
+        UUID policyId = config != null ? config.getPolicyId() : null;
         return new FirewallRepositoryStateXO(
                 repository.getId(),
                 repository.getName(),
@@ -414,10 +585,21 @@ public class FirewallAdminController {
                 repository.getType(),
                 mode,
                 config != null ? config.getFailMode() : null,
+                policyId,
+                policyId == null ? null : policyNames.get(policyId),
                 FirewallEffectiveState.resolve(enforcementEnabled, governing),
                 config != null,
                 violationCounts.getOrDefault(repository.getId(), 0L),
                 config != null ? config.getUpdatedAt() : null);
+    }
+
+    /** Policy id to name, for the assignment column. Policies are a handful of rows. */
+    private Map<UUID, String> policyNames() {
+        Map<UUID, String> names = new HashMap<>();
+        for (FirewallPolicyEntity policy : policyRepo.findAll()) {
+            names.put(policy.getId(), policy.getName());
+        }
+        return names;
     }
 
     /**

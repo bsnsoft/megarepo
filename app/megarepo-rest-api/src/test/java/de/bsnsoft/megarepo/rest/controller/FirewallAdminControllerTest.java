@@ -5,15 +5,18 @@ import de.bsnsoft.megarepo.core.firewall.FirewallFailMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 import de.bsnsoft.megarepo.database.entity.FirewallEnforcementSettingsEntity;
+import de.bsnsoft.megarepo.database.entity.FirewallPolicyEntity;
 import de.bsnsoft.megarepo.database.entity.FirewallRepositoryConfigEntity;
 import de.bsnsoft.megarepo.database.entity.FirewallViolationEntity;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
 import de.bsnsoft.megarepo.database.repository.FirewallEnforcementSettingsJpaRepository;
+import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.rest.advice.GlobalExceptionHandler;
 import de.bsnsoft.megarepo.security.SecurityConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +80,8 @@ class FirewallAdminControllerTest {
 
     private static final UUID MAVEN_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID NPM_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID DEFAULT_POLICY_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+    private static final UUID STRICT_POLICY_ID = UUID.fromString("44444444-4444-4444-4444-444444444444");
 
     private MockMvc mockMvc;
 
@@ -85,6 +90,8 @@ class FirewallAdminControllerTest {
     @Mock private FirewallRepositoryConfigJpaRepository configRepo;
     @Mock private FirewallViolationJpaRepository violationRepo;
     @Mock private RepositoryJpaRepository repositoryRepo;
+    @Mock private FirewallPolicyJpaRepository policyRepo;
+    @Mock private QuarantineService quarantine;
 
     @BeforeEach
     void setUp() {
@@ -94,6 +101,8 @@ class FirewallAdminControllerTest {
                         configRepo,
                         violationRepo,
                         repositoryRepo,
+                        policyRepo,
+                        quarantine,
                         FirewallAuditProperties.defaults()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -391,6 +400,184 @@ class FirewallAdminControllerTest {
         verify(configRepo, never()).save(any());
     }
 
+    // ── Per-repository policy ───────────────────────────────────────────
+
+    @Test
+    @DisplayName("assigning a policy to a repository that is only observing needs no phrase")
+    void assigningAPolicyToAnObservingRepositoryIsUngated() throws Exception {
+        FirewallRepositoryConfigEntity existing = config(MAVEN_ID, FirewallMode.AUDIT);
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(configRepo.findById(MAVEN_ID)).thenReturn(Optional.of(existing));
+        when(configRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(policyRepo.findById(STRICT_POLICY_ID)).thenReturn(Optional.of(policy(STRICT_POLICY_ID, "Strict")));
+        when(policyRepo.findAll()).thenReturn(List.of(policy(STRICT_POLICY_ID, "Strict")));
+        givenEnforcement(true);
+        givenViolationCounts();
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.policyId").value(STRICT_POLICY_ID.toString()))
+                .andExpect(jsonPath("$.policyName").value("Strict"));
+
+        assertThat(existing.getPolicyId()).isEqualTo(STRICT_POLICY_ID);
+    }
+
+    @Test
+    @DisplayName("swapping the policy under an armed repository needs the typed phrase")
+    void assigningAPolicyToAnArmedRepositoryNeedsConfirmation() throws Exception {
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(configRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(config(MAVEN_ID, FirewallMode.QUARANTINE)));
+        when(policyRepo.findById(STRICT_POLICY_ID)).thenReturn(Optional.of(policy(STRICT_POLICY_ID, "Strict")));
+        givenEnforcement(true);
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString("CHANGE POLICY maven-central")));
+
+        verify(configRepo, never()).save(any());
+        verify(quarantine, never()).invalidatePolicy(any());
+    }
+
+    @Test
+    @DisplayName("with the phrase the assignment is written and the quarantine queue is woken")
+    void assigningAPolicyInvalidatesBothSides() throws Exception {
+        FirewallRepositoryConfigEntity existing = config(MAVEN_ID, FirewallMode.QUARANTINE);
+        existing.setPolicyId(DEFAULT_POLICY_ID);
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(configRepo.findById(MAVEN_ID)).thenReturn(Optional.of(existing));
+        when(configRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(policyRepo.findById(STRICT_POLICY_ID)).thenReturn(Optional.of(policy(STRICT_POLICY_ID, "Strict")));
+        when(policyRepo.findAll()).thenReturn(List.of(policy(STRICT_POLICY_ID, "Strict")));
+        givenEnforcement(true);
+        givenViolationCounts();
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\",\"failMode\":\"FAIL_CLOSED\","
+                                + "\"confirmation\":\"CHANGE POLICY maven-central\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(existing.getFailMode()).isEqualTo(FirewallFailMode.FAIL_CLOSED);
+        // Components held here were judged by the policy the repository is
+        // leaving; without both calls they stay held on a verdict that no longer
+        // applies until the next sweep.
+        verify(quarantine).invalidatePolicy(DEFAULT_POLICY_ID);
+        verify(quarantine).invalidatePolicy(STRICT_POLICY_ID);
+    }
+
+    @Test
+    @DisplayName("clearing the assignment resolves 'the default' to the policy that holds the flag")
+    void clearingAnAssignmentInvalidatesTheDefaultPolicy() throws Exception {
+        FirewallRepositoryConfigEntity existing = config(MAVEN_ID, FirewallMode.AUDIT);
+        existing.setPolicyId(STRICT_POLICY_ID);
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(configRepo.findById(MAVEN_ID)).thenReturn(Optional.of(existing));
+        when(configRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(policyRepo.findByIsDefaultTrue())
+                .thenReturn(Optional.of(policy(DEFAULT_POLICY_ID, "Default")));
+        givenEnforcement(false);
+        givenViolationCounts();
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.policyId").value(org.hamcrest.Matchers.nullValue()));
+
+        verify(quarantine).invalidatePolicy(STRICT_POLICY_ID);
+        verify(quarantine).invalidatePolicy(DEFAULT_POLICY_ID);
+    }
+
+    @Test
+    @DisplayName("creating the config row here must not start auditing a repository that was off")
+    void assignmentDoesNotChangeTheMode() throws Exception {
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(configRepo.findById(MAVEN_ID)).thenReturn(Optional.empty());
+        when(configRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(policyRepo.findById(STRICT_POLICY_ID)).thenReturn(Optional.of(policy(STRICT_POLICY_ID, "Strict")));
+        givenEnforcement(false);
+        givenViolationCounts();
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\"}"))
+                .andExpect(status().isOk())
+                // The instance default is OFF; the entity's own default is AUDIT,
+                // and taking it would have this endpoint quietly start evaluating
+                // downloads it was only asked to configure.
+                .andExpect(jsonPath("$.mode").value("OFF"))
+                .andExpect(jsonPath("$.effectiveState").value("NOT_EVALUATED"));
+
+        ArgumentCaptor<FirewallRepositoryConfigEntity> saved =
+                ArgumentCaptor.forClass(FirewallRepositoryConfigEntity.class);
+        verify(configRepo).save(saved.capture());
+        assertThat(saved.getValue().getMode()).isEqualTo(FirewallMode.OFF);
+    }
+
+    @Test
+    @DisplayName("a group repository is refused a policy, for the reason it is refused a mode")
+    void groupsGetNoPolicy() throws Exception {
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "all-maven", "maven2", "GROUP")));
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString("member repositories")));
+
+        verify(configRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("a policy that does not exist is a 404, not a dangling assignment")
+    void unknownPolicyIsNotAssigned() throws Exception {
+        when(repositoryRepo.findById(MAVEN_ID))
+                .thenReturn(Optional.of(repository(MAVEN_ID, "maven-central", "maven2", "proxy")));
+        when(policyRepo.findById(STRICT_POLICY_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(put("/api/v1/admin/firewall/repositories/" + MAVEN_ID + "/policy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policyId\":\"" + STRICT_POLICY_ID + "\"}"))
+                .andExpect(status().isNotFound());
+
+        verify(configRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("the overview says which policy each repository resolves to")
+    void statusReportsThePolicyAssignment() throws Exception {
+        FirewallRepositoryConfigEntity assigned = config(MAVEN_ID, FirewallMode.AUDIT);
+        assigned.setPolicyId(STRICT_POLICY_ID);
+        givenEnforcement(false);
+        givenRepositories(
+                repository(MAVEN_ID, "maven-central", "maven2", "proxy"),
+                repository(NPM_ID, "npm-proxy", "npm", "proxy"));
+        givenConfigs(assigned, config(NPM_ID, FirewallMode.AUDIT));
+        givenViolationCounts();
+        when(policyRepo.findAll()).thenReturn(List.of(policy(STRICT_POLICY_ID, "Strict")));
+
+        mockMvc.perform(get("/api/v1/admin/firewall/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.repositories[0].policyName").value("Strict"))
+                // Null rather than the default policy's name: this repository has
+                // chosen nothing, and showing a name here would read as a choice.
+                .andExpect(jsonPath("$.repositories[1].policyId")
+                        .value(org.hamcrest.Matchers.nullValue()));
+    }
+
     // ── Violations ──────────────────────────────────────────────────────
 
     @Test
@@ -499,6 +686,13 @@ class FirewallAdminControllerTest {
         entity.setName(name);
         entity.setFormat(format);
         entity.setType(type);
+        return entity;
+    }
+
+    private static FirewallPolicyEntity policy(UUID id, String name) {
+        FirewallPolicyEntity entity = new FirewallPolicyEntity();
+        entity.setId(id);
+        entity.setName(name);
         return entity;
     }
 
