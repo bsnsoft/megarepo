@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './auth/AuthContext';
+import { AuthProvider, ADMIN_ROLE } from './auth/AuthContext';
 import { ToastProvider } from './components/Toast';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './auth/ProtectedRoute';
+import RequireRole from './auth/RequireRole';
 import AppLayout from './layout/AppLayout';
 import LoginPage from './auth/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -68,25 +69,37 @@ export default function App() {
               <Route path="/admin/cleanup" element={<CachePage />} />
               <Route path="/admin/routing-rules" element={<RoutingRulesPage />} />
 
-              {/* Administration - Security */}
-              <Route path="/admin/users" element={<UsersPage />} />
-              <Route path="/admin/roles" element={<RolesPage />} />
-              <Route path="/admin/ldap" element={<LdapPage />} />
-              <Route path="/admin/ssl" element={<SslCertificatesPage />} />
-              <Route path="/admin/anonymous" element={<AnonymousAccessPage />} />
-              <Route path="/admin/nvd-firewall" element={<NvdFirewallPage />} />
-              <Route path="/admin/firewall" element={<RepositoryFirewallPage />} />
-              <Route path="/admin/firewall/quarantine" element={<QuarantineQueuePage />} />
-              <Route path="/admin/firewall/policies" element={<PolicyListPage />} />
-              <Route path="/admin/firewall/policies/:id" element={<PolicyEditorPage />} />
-              <Route path="/admin/firewall/exemptions" element={<ExemptionsPage />} />
-
-              {/* Administration - System */}
+              {/* Administration - System, open to any logged-in account */}
               <Route path="/admin/status" element={<StatusPage />} />
               <Route path="/admin/tasks" element={<TasksPage />} />
-              <Route path="/admin/http-proxy" element={<HttpProxyPage />} />
               <Route path="/admin/audit" element={<AuditLogPage />} />
-              <Route path="/admin/license" element={<LicensePage />} />
+
+              {/*
+                Administrator-only screens. Grouping them under one guard keeps
+                a pasted URL behaving like a click in the navigation, and keeps
+                a non-administrator out of pages that would render as nothing
+                but permission errors. The list of routes below is the one in
+                auth/adminAreas.ts, which the sidebar filters by — the two have
+                to stay in step.
+              */}
+              <Route element={<RequireRole role={ADMIN_ROLE} />}>
+                {/* Security */}
+                <Route path="/admin/users" element={<UsersPage />} />
+                <Route path="/admin/roles" element={<RolesPage />} />
+                <Route path="/admin/ldap" element={<LdapPage />} />
+                <Route path="/admin/ssl" element={<SslCertificatesPage />} />
+                <Route path="/admin/anonymous" element={<AnonymousAccessPage />} />
+                <Route path="/admin/nvd-firewall" element={<NvdFirewallPage />} />
+                <Route path="/admin/firewall" element={<RepositoryFirewallPage />} />
+                <Route path="/admin/firewall/quarantine" element={<QuarantineQueuePage />} />
+                <Route path="/admin/firewall/policies" element={<PolicyListPage />} />
+                <Route path="/admin/firewall/policies/:id" element={<PolicyEditorPage />} />
+                <Route path="/admin/firewall/exemptions" element={<ExemptionsPage />} />
+
+                {/* System */}
+                <Route path="/admin/http-proxy" element={<HttpProxyPage />} />
+                <Route path="/admin/license" element={<LicensePage />} />
+              </Route>
 
               {/* Account */}
               <Route path="/account" element={<AccountPage />} />
