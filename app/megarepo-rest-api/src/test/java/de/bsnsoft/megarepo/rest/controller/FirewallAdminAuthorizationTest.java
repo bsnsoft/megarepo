@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -81,6 +82,12 @@ class FirewallAdminAuthorizationTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        // The mock beans are singletons in a Spring context that is cached
+        // across test methods, so recorded interactions would otherwise carry
+        // from one method into the next and make the never() assertions below
+        // report a neighbour's calls instead of their own. Ahead of the
+        // stubbing, which reset() would otherwise wipe.
+        reset(enforcementRepo, enforcementSettings);
         when(enforcementRepo.current()).thenReturn(new FirewallEnforcementSettingsEntity());
     }
 

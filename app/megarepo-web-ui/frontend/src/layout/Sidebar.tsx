@@ -1,11 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth, ADMIN_ROLE } from '../auth/AuthContext';
+import { isAdminOnlyRoute } from '../auth/adminAreas';
 import type { LicenseStatus, StatusCheck } from '../types/api';
+
+interface SidebarLink {
+  to: string;
+  icon: string;
+  label: string;
+  end?: boolean;
+}
 
 interface SidebarSection {
   label: string;
-  children: { to: string; icon: string; label: string; end?: boolean }[];
+  children: SidebarLink[];
 }
 
 const browseLinks = [
@@ -140,11 +149,38 @@ function CollapsibleSection({ section }: { section: SidebarSection }) {
   );
 }
 
+/**
+ * Drops the entries this session cannot use, and then any section left empty.
+ *
+ * Which entries those are comes from `adminAreas`, the same list the route
+ * guard uses. Filtering here is a courtesy — nothing is protected by a link
+ * being absent — but it is the difference between a navigation that works and
+ * one where two thirds of it answers "You don't have permission".
+ */
+function visibleSections(sections: SidebarSection[], isAdmin: boolean): SidebarSection[] {
+  if (isAdmin) {
+    return sections;
+  }
+  return sections
+    .map((section) => ({
+      ...section,
+      children: section.children.filter((link) => !isAdminOnlyRoute(link.to)),
+    }))
+    .filter((section) => section.children.length > 0);
+}
+
 export default function Sidebar() {
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [version, setVersion] = useState<string | null>(null);
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole(ADMIN_ROLE);
+  const sections = useMemo(() => visibleSections(adminSections, isAdmin), [isAdmin]);
 
   useEffect(() => {
+    // The licence banner below is read by every logged-in user, administrator
+    // or not: GET /api/v1/system/license is deliberately not an admin endpoint,
+    // and blanking the banner for non-administrators would hide the edition and
+    // the seat warning from exactly the people who run into the seat limit.
     api.get<LicenseStatus>('/system/license').then(setLicense).catch(() => {});
     api.get<StatusCheck>('/status/check').then((data) => setVersion(data.version)).catch(() => {});
   }, []);
@@ -184,10 +220,14 @@ export default function Sidebar() {
           </NavLink>
         ))}
 
-        <div className="px-5 pt-5 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Administration</div>
-        {adminSections.map((section) => (
-          <CollapsibleSection key={section.label} section={section} />
-        ))}
+        {sections.length > 0 && (
+          <>
+            <div className="px-5 pt-5 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Administration</div>
+            {sections.map((section) => (
+              <CollapsibleSection key={section.label} section={section} />
+            ))}
+          </>
+        )}
       </nav>
 
       {/* Version badge */}
