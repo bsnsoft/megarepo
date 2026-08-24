@@ -94,6 +94,17 @@ endpoints and rotate accordingly.
   scripts and CI identities use them without administrator rights. (osTicket
   #155155)
 
+### UI
+- **Screens and controls follow the server's rules** — the operational screens
+  that became administrator-only (tasks, blob stores, cleanup policies, routing
+  rules, audit log) are no longer offered to accounts that cannot use them, and
+  the delete controls for repositories, components and assets are hidden the same
+  way. The repository screens themselves stay open, because creating and updating
+  a repository is deliberately still open on the server. The blob store picker on
+  the create screen falls back to a name field for non-administrators instead of
+  a select that silently lists nothing. This is presentation only — the server
+  enforces every one of these rules for itself. (osTicket #155155)
+
 ### Fixed
 - **Scheduled tasks seeded at installation never ran** — the seeded tasks
   (including the NVD firewall sync and the cleanup tasks) were written without a
