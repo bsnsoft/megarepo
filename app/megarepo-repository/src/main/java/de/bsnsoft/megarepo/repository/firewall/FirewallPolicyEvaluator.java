@@ -18,6 +18,7 @@ import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleSettings;
 import de.bsnsoft.megarepo.repository.firewall.rule.impl.CvssThresholdRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -104,13 +105,18 @@ public class FirewallPolicyEvaluator {
     private final FirewallPolicyJpaRepository policies;
     private final FirewallPolicyRuleJpaRepository rules;
     private final FirewallRuleRegistry registry;
-    private final ExemptionService exemptions;
+    /**
+     * Looked up lazily so that a context without the exemption package still
+     * starts. A missing service means "no exemption applies", which is the same
+     * conservative reading as an exemption store that cannot be read.
+     */
+    private final ObjectProvider<ExemptionService> exemptions;
 
     public FirewallPolicyEvaluator(
             FirewallPolicyJpaRepository policies,
             FirewallPolicyRuleJpaRepository rules,
             FirewallRuleRegistry registry,
-            ExemptionService exemptions) {
+            ObjectProvider<ExemptionService> exemptions) {
         this.policies = policies;
         this.rules = rules;
         this.registry = registry;
@@ -179,16 +185,31 @@ public class FirewallPolicyEvaluator {
                 if (undecided == null) {
                     undecided = outcome.reason();
                 }
+                // A rule that could not decide goes on the record like one that
+                // did. Under fail-closed it is the entire reason the download was
+                // refused, and a 403 whose body lists no violations — with an
+                // audit trail to match — leaves nobody able to say what happened.
+                // Under fail-open it is served, and the row lands as a WARN,
+                // which is how an operator finds out a rule has been silently
+                // undecidable for a week.
+                FirewallRuleViolation couldNotDecide = FirewallRuleViolation.undecided(
+                        ruleSettings.ruleType(), ruleSettings.action(), outcome.reason());
                 // An exemption covering the rule also covers its indecision: if
                 // the operator has already decided this component may pass
                 // MIN_AGE, holding it because MIN_AGE cannot yet tell would deny
                 // exactly what they approved. Only worth the query under
                 // FAIL_CLOSED — fail-open serves either way, and the exemption
                 // lookup is the one thing here that costs an index read.
-                if (undecidable == null && settings.failsClosed()
-                        && exemptionFor(context, ruleSettings.ruleType()).isEmpty()) {
-                    undecidable = outcome.reason();
+                if (settings.failsClosed()) {
+                    Optional<FirewallExemption> covering =
+                            exemptionFor(context, ruleSettings.ruleType());
+                    if (covering.isPresent()) {
+                        couldNotDecide = couldNotDecide.exemptedBy(covering.get().id());
+                    } else if (undecidable == null) {
+                        undecidable = outcome.reason();
+                    }
                 }
+                violations.add(couldNotDecide);
             }
         }
 
@@ -279,8 +300,12 @@ public class FirewallPolicyEvaluator {
         if (ruleType == null) {
             return Optional.empty();
         }
+        ExemptionService store = exemptions.getIfAvailable();
+        if (store == null) {
+            return Optional.empty();
+        }
         try {
-            return exemptions.findApplicable(
+            return store.findApplicable(
                     context.repositoryId(), context.identity(), ruleType, context.evaluatedAt());
         } catch (RuntimeException e) {
             log.warn("Could not read the firewall exemptions for {} in {} — treating the "

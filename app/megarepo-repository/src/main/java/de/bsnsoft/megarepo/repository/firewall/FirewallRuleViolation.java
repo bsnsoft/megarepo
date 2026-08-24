@@ -32,13 +32,21 @@ import java.util.UUID;
  *     for rules that do not derive from advisories
  * @param exemptionId the exemption that suppressed this violation, or null when
  *     none did. Only the engine sets it; a rule never knows about exemptions
+ * @param undecided whether the rule <em>could not tell</em> rather than matched.
+ *     Such an entry exists because a refusal has to be explainable: under
+ *     {@code FAIL_CLOSED} an undecidable rule is the whole reason the download
+ *     was withheld, and a 403 listing no rules — with an audit trail to match —
+ *     leaves nobody able to say what happened. Under {@code FAIL_OPEN} the
+ *     artifact is served and the entry lands as an observation, which is how an
+ *     operator finds out a rule has been quietly undecidable for a week
  */
 public record FirewallRuleViolation(
         FirewallRuleType ruleType,
         FirewallAction action,
         String reason,
         List<String> advisoryIds,
-        UUID exemptionId) {
+        UUID exemptionId,
+        boolean undecided) {
 
     public FirewallRuleViolation {
         advisoryIds = advisoryIds == null ? List.of() : List.copyOf(advisoryIds);
@@ -50,7 +58,32 @@ public record FirewallRuleViolation(
      */
     public FirewallRuleViolation(
             FirewallRuleType ruleType, FirewallAction action, String reason, List<String> advisoryIds) {
-        this(ruleType, action, reason, advisoryIds, null);
+        this(ruleType, action, reason, advisoryIds, null, false);
+    }
+
+    /** A matched violation with an exemption already weighed against it. */
+    public FirewallRuleViolation(
+            FirewallRuleType ruleType,
+            FirewallAction action,
+            String reason,
+            List<String> advisoryIds,
+            UUID exemptionId) {
+        this(ruleType, action, reason, advisoryIds, exemptionId, false);
+    }
+
+    /**
+     * A rule that could not reach a verdict, recorded so that the refusal it may
+     * cause can be explained. Carries no advisory ids by construction: nothing
+     * matched.
+     */
+    public static FirewallRuleViolation undecided(
+            FirewallRuleType ruleType, FirewallAction action, String reason) {
+        return new FirewallRuleViolation(ruleType, action, reason, List.of(), null, true);
+    }
+
+    /** Whether the rule reached a verdict against this component. */
+    public boolean matched() {
+        return !undecided;
     }
 
     /** Whether this rule asks for the download to be denied. */
@@ -78,6 +111,6 @@ public record FirewallRuleViolation(
 
     /** The same violation, marked as covered by an exemption. */
     public FirewallRuleViolation exemptedBy(UUID exemption) {
-        return new FirewallRuleViolation(ruleType, action, reason, advisoryIds, exemption);
+        return new FirewallRuleViolation(ruleType, action, reason, advisoryIds, exemption, undecided);
     }
 }
