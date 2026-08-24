@@ -62,6 +62,15 @@ subprojects {
 
         tasks.withType<Test> {
             useJUnitPlatform()
+
+            // A failing build should name the tests that failed in its own log.
+            // Without this the console says "There were failing tests" and points
+            // at an HTML report, which on a CI runner nobody can open.
+            testLogging {
+                events("failed")
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                showStackTraces = true
+            }
         }
     }
 }

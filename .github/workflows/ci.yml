@@ -44,6 +44,46 @@ jobs:
       - name: Unit tests
         working-directory: app
         run: ./gradlew test -x :megarepo-integration-tests:test -x :megarepo-web-ui:npmInstall -x :megarepo-web-ui:frontendBuild -x :megarepo-web-ui:copyFrontend
+      # Annotations are readable through the public API, unlike run logs and
+      # artifacts, which both need a token. So a red run states which tests
+      # failed somewhere that anyone looking at the commit can see.
+      - name: Report failing tests
+        if: failure()
+        working-directory: app
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          shown = 0
+          for path in sorted(glob.glob("**/build/test-results/test/*.xml", recursive=True)):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter("testcase"):
+                  for bad in list(case.findall("failure")) + list(case.findall("error")):
+                      if shown >= 20:
+                          print("::error::more failures not listed; see the test-reports artifact")
+                          raise SystemExit
+                      first = (bad.get("message") or bad.text or "").strip().splitlines()
+                      detail = first[0][:300] if first else bad.get("type", "failed")
+                      print(f"::error::{case.get('classname')}.{case.get('name')} — {detail}")
+                      shown += 1
+          if not shown:
+              print("::error::the test task failed without producing a failing test case — look at the log")
+          PY
+      # Without this, a red run says only "exit code 1": the HTML/XML reports stay
+      # on the runner and the failing test names are never visible to anyone who
+      # cannot open the raw log.
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/**/build/reports/tests/test/**
+            app/**/build/test-results/test/*.xml
+          retention-days: 14
+          if-no-files-found: ignore
 
   package:
     needs: [build, test]
