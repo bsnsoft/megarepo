@@ -242,7 +242,12 @@ public final class FirewallBlockResponse {
     public static Map<String, String> headers(FirewallEvaluation evaluation, Context context) {
         FirewallDecision decision = evaluation.decision();
         Map<String, String> headers = new LinkedHashMap<>();
-        headers.put(HEADER_FIREWALL, decision.held() ? "quarantined" : "blocked");
+        // Stays "blocked" for a held component too. This header is the stable
+        // machine-readable answer to "was this refusal the firewall's?", and a
+        // proxy or a CI plugin keying on it must not start missing refusals
+        // because Phase 2 introduced a second kind. Which kind it is lives in
+        // HEADER_QUARANTINE, where a reader who cares can find it.
+        headers.put(HEADER_FIREWALL, "blocked");
         headers.put(HEADER_REASON, headerSafe(summary(evaluation, context)));
 
         List<FirewallRuleViolation> blocking = decision.blockingViolations();
