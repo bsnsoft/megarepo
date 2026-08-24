@@ -21,7 +21,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Flyway migration tests for the repository firewall schema (V11 policies,
- * V12 advisories, V13 violations, V16 enforcement switch and default policy).
+ * V12 advisories, V13 violations, V16 enforcement switch and default policy,
+ * V17 quarantine/exemptions/component facts, V18 whitelist migration, V19 the
+ * Phase 2 scheduled tasks).
  *
  * <p>Two paths are covered, because both happen in the field: a brand new
  * installation, and an existing installation that already runs the V8 NVD
@@ -37,7 +39,10 @@ class FirewallMigrationTest {
             "advisory",
             "advisory_affected",
             "advisory_sync_state",
-            "firewall_violation");
+            "firewall_violation",
+            "firewall_quarantine",
+            "firewall_exemption",
+            "firewall_component_facts");
 
     /**
      * Firewall tables that carry no seeded data. {@code firewall_policy} and
@@ -51,7 +56,13 @@ class FirewallMigrationTest {
             "advisory",
             "advisory_affected",
             "advisory_sync_state",
-            "firewall_violation");
+            "firewall_violation",
+            // V17's three tables start empty on every path. firewall_exemption is
+            // the exception on an upgrade from V8, where V18 fills it from the
+            // whitelist — see migratesOverExistingV8Installation, which asserts
+            // that separately.
+            "firewall_quarantine",
+            "firewall_component_facts");
 
     /** V8 tables that must survive the upgrade untouched. */
     private static final List<String> V8_TABLES = List.of(
@@ -79,7 +90,7 @@ class FirewallMigrationTest {
         MigrateResult result = flyway.migrate();
 
         assertThat(result.success).isTrue();
-        assertThat(appliedVersions(flyway)).contains("11", "12", "13");
+        assertThat(appliedVersions(flyway)).contains("11", "12", "13", "16", "17", "18", "19");
         // Throws if a checksum or ordering is off.
         flyway.validate();
 
@@ -118,7 +129,17 @@ class FirewallMigrationTest {
                     "UPDATE nvd_firewall_settings SET enabled = true, cvss_threshold = 8.5 WHERE id = 1");
             statement.executeUpdate("""
                     INSERT INTO nvd_firewall_whitelist (entry_type, value, reason, added_by)
-                    VALUES ('COMPONENT', 'com.acme:util:1.0.0', 'false positive', 'admin')
+                    VALUES ('COMPONENT', 'maven2:com.acme:util:1.0.0', 'false positive', 'admin')
+                    """);
+            // Version-less: the V8 matcher's prefix rule covered every version.
+            statement.executeUpdate("""
+                    INSERT INTO nvd_firewall_whitelist (entry_type, value, added_by)
+                    VALUES ('COMPONENT', 'npm::left-pad', 'ci')
+                    """);
+            // Not component-scoped, and deliberately not migrated.
+            statement.executeUpdate("""
+                    INSERT INTO nvd_firewall_whitelist (entry_type, value, reason, added_by)
+                    VALUES ('CVE', 'CVE-2021-44228', 'accepted risk', 'admin')
                     """);
             statement.executeUpdate("""
                     INSERT INTO cve_entries (cve_id, published, last_modified, cvss_score, severity)
@@ -137,11 +158,11 @@ class FirewallMigrationTest {
 
         assertThat(result.success).isTrue();
         assertThat(result.migrationsExecuted).isGreaterThanOrEqualTo(3);
-        assertThat(appliedVersions(flyway)).contains("11", "12", "13");
+        assertThat(appliedVersions(flyway)).contains("11", "12", "13", "16", "17", "18", "19");
 
         try (Connection connection = PostgresTestSupport.connect(jdbcUrl)) {
             // 4. Nothing from V8 was dropped or emptied.
-            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM nvd_firewall_whitelist")).isEqualTo(1);
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM nvd_firewall_whitelist")).isEqualTo(3);
             assertThat(scalarLong(connection, "SELECT COUNT(*) FROM nvd_firewall_blocks")).isEqualTo(1);
             assertThat(scalarLong(connection, "SELECT COUNT(*) FROM cve_entries")).isEqualTo(1);
             assertThat(scalarDouble(connection, "SELECT cvss_threshold FROM nvd_firewall_settings WHERE id = 1"))
@@ -159,6 +180,13 @@ class FirewallMigrationTest {
                         .as("%s starts empty; the V8 data migration is still deferred", table)
                         .isZero();
             }
+
+            // 5b. …except firewall_exemption, which V18 fills from the two
+            //     component-scoped whitelist rows. The CVE row is not a
+            //     component and is deliberately left behind.
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM firewall_exemption"))
+                    .as("component whitelist entries become approved exemptions")
+                    .isEqualTo(2);
 
             // 6. The one thing an upgrade must never do: start blocking.
             assertThat(scalarBoolean(
@@ -245,18 +273,182 @@ class FirewallMigrationTest {
     }
 
     @Test
-    @DisplayName("Phase 2 tables are deliberately absent")
-    void quarantineAndExemptionTablesAreNotCreatedYet() throws SQLException {
-        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_scope");
+    @DisplayName("V17 constrains the closed Phase 2 enums and leaves the open ones open")
+    void phase2CheckConstraints() throws SQLException {
+        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_phase2_checks");
+        assertThat(flywayFor(jdbcUrl).migrate().success).isTrue();
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    INSERT INTO repositories (id, name, format, type, blob_store_name)
+                    VALUES ('33333333-3333-3333-3333-333333333333', 'maven-hosted', 'maven2', 'HOSTED', 'default')
+                    """);
+
+            // Quarantine state is a closed set: a fourth state is a behaviour
+            // change, not a new rule. decided_at and resolution are supplied so
+            // that the row satisfies firewall_quarantine_decided_is_complete and
+            // the state check is the only thing left to fail.
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_quarantine
+                        (repository_id, repository_name, component_key, state, reason_code,
+                         resolution, decided_at, decided_by)
+                    VALUES ('33333333-3333-3333-3333-333333333333', 'maven-hosted',
+                            'pkg:maven/com.acme/util@1.0', 'PONDERED', 'MIN_AGE_NOT_MET',
+                            'MANUAL_RELEASE', NOW(), 'admin')
+                    """))
+                    .hasMessageContaining("firewall_quarantine_state_check");
+
+            // reason_code is deliberately unconstrained: a new rule type must be
+            // able to name its own quarantine reason without a migration.
+            assertThat(statement.executeUpdate("""
+                    INSERT INTO firewall_quarantine
+                        (repository_id, repository_name, component_key, state, reason_code)
+                    VALUES ('33333333-3333-3333-3333-333333333333', 'maven-hosted',
+                            'pkg:maven/com.acme/util@1.0', 'QUARANTINED', 'SOME_FUTURE_REASON')
+                    """)).isEqualTo(1);
+
+            // One entry per component per repository, not one per path.
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_quarantine
+                        (repository_id, repository_name, component_key, state, reason_code)
+                    VALUES ('33333333-3333-3333-3333-333333333333', 'maven-hosted',
+                            'pkg:maven/com.acme/util@1.0', 'QUARANTINED', 'UNKNOWN_COMPONENT')
+                    """))
+                    .hasMessageContaining("firewall_quarantine_unique_component");
+
+            // A decided entry has to say who, when and how.
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_quarantine
+                        (repository_id, repository_name, component_key, state, reason_code)
+                    VALUES ('33333333-3333-3333-3333-333333333333', 'maven-hosted',
+                            'pkg:maven/com.acme/other@1.0', 'RELEASED', 'MIN_AGE_NOT_MET')
+                    """))
+                    .hasMessageContaining("firewall_quarantine_decided_is_complete");
+
+            // An approved exemption without an approver is one nobody signed.
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_exemption
+                        (component_key, state, justification, requested_by)
+                    VALUES ('pkg:npm/left-pad@1.3.0', 'APPROVED', 'needed for the build', 'dev')
+                    """))
+                    .hasMessageContaining("firewall_exemption_approved_has_approver");
+
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_exemption
+                        (component_key, scope_type, state, justification, requested_by)
+                    VALUES ('pkg:npm/left-pad@1.3.0', 'EVERYTHING', 'REQUESTED', 'why not', 'dev')
+                    """))
+                    .hasMessageContaining("firewall_exemption_scope_check");
+
+            // Declared metadata only — a licence read from file contents has no
+            // value to record here, and the constraint is what says so.
+            assertThatThrownBy(() -> statement.executeUpdate("""
+                    INSERT INTO firewall_component_facts (purl, purl_type, state, license_source)
+                    VALUES ('pkg:maven/com.acme/util@1.0', 'maven', 'RESOLVED', 'FILE_SCAN')
+                    """))
+                    .hasMessageContaining("firewall_component_facts_license_source_check");
+        }
+    }
+
+    @Test
+    @DisplayName("V18 carries V8 whitelist rows over as non-expiring approved exemptions")
+    void whitelistBecomesExemptions() throws SQLException {
+        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_whitelist");
+
+        Flyway toV8 = Flyway.configure()
+                .dataSource(jdbcUrl, PostgresTestSupport.USERNAME, PostgresTestSupport.PASSWORD)
+                .locations("classpath:db/migration")
+                .placeholderReplacement(false)
+                .target(MigrationVersion.fromVersion("8"))
+                .load();
+        assertThat(toV8.migrate().success).isTrue();
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    INSERT INTO nvd_firewall_whitelist (entry_type, value, reason, added_by)
+                    VALUES ('COMPONENT', 'maven2:org.apache.logging.log4j:log4j-core:2.14.1',
+                            'mitigated by configuration', 'alice')
+                    """);
+            statement.executeUpdate("""
+                    INSERT INTO nvd_firewall_whitelist (entry_type, value, added_by)
+                    VALUES ('COMPONENT', 'maven2:com.acme:util', 'bob')
+                    """);
+            statement.executeUpdate("""
+                    INSERT INTO nvd_firewall_whitelist (entry_type, value, added_by)
+                    VALUES ('CVE', 'CVE-2021-44228', 'carol')
+                    """);
+        }
+
         assertThat(flywayFor(jdbcUrl).migrate().success).isTrue();
 
         try (Connection connection = PostgresTestSupport.connect(jdbcUrl)) {
-            assertThat(tableExists(connection, "firewall_quarantine"))
-                    .as("firewall_quarantine belongs to Phase 2")
-                    .isFalse();
-            assertThat(tableExists(connection, "firewall_exemption"))
-                    .as("firewall_exemption belongs to Phase 2")
-                    .isFalse();
+            // Only the component-scoped rows. A CVE entry says "ignore this
+            // advisory everywhere", which has no component to scope an exemption
+            // to, so it is left where it is rather than silently widened.
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM firewall_exemption")).isEqualTo(2);
+            assertThat(scalarLong(connection,
+                    "SELECT COUNT(*) FROM firewall_exemption WHERE key_kind = 'LEGACY_COORDINATE'"))
+                    .as("the V8 value is a coordinate, not a purl, and is kept verbatim")
+                    .isEqualTo(2);
+
+            // Approved and non-expiring: an upgrade must not start blocking what
+            // the operator had already allowed, and must not invent an end date.
+            assertThat(scalarLong(connection,
+                    "SELECT COUNT(*) FROM firewall_exemption WHERE state = 'APPROVED' AND expires_at IS NULL"))
+                    .isEqualTo(2);
+            assertThat(scalarLong(connection,
+                    "SELECT COUNT(*) FROM firewall_exemption WHERE rule_type IS NOT NULL "
+                            + "OR repository_id IS NOT NULL"))
+                    .as("the V8 whitelist was global and short-circuited every check")
+                    .isZero();
+
+            // Scope is read off the V8 matcher's behaviour: three colons matched
+            // one version, two colons matched every version.
+            assertThat(scalarString(connection, """
+                    SELECT scope_type FROM firewall_exemption
+                    WHERE component_key = 'maven2:org.apache.logging.log4j:log4j-core:2.14.1'
+                    """)).isEqualTo("VERSION");
+            assertThat(scalarString(connection, """
+                    SELECT scope_type FROM firewall_exemption
+                    WHERE component_key = 'maven2:com.acme:util'
+                    """)).isEqualTo("COMPONENT");
+
+            // Who and why survive the move; a row with no stated reason gets one
+            // that says there was none, because justification is NOT NULL.
+            assertThat(scalarString(connection, """
+                    SELECT approved_by FROM firewall_exemption
+                    WHERE component_key = 'maven2:org.apache.logging.log4j:log4j-core:2.14.1'
+                    """)).isEqualTo("alice");
+            assertThat(scalarString(connection, """
+                    SELECT justification FROM firewall_exemption
+                    WHERE component_key = 'maven2:com.acme:util'
+                    """)).contains("no reason was recorded");
+
+            // Nothing was taken away from V8 either.
+            assertThat(scalarLong(connection, "SELECT COUNT(*) FROM nvd_firewall_whitelist")).isEqualTo(3);
+        }
+    }
+
+    @Test
+    @DisplayName("V19 seeds the Phase 2 tasks with a due next_run")
+    void phase2TasksAreScheduled() throws SQLException {
+        String jdbcUrl = PostgresTestSupport.freshDatabase("fw_tasks");
+        assertThat(flywayFor(jdbcUrl).migrate().success).isTrue();
+
+        try (Connection connection = PostgresTestSupport.connect(jdbcUrl)) {
+            // A seeded task row with next_run NULL is inert until somebody
+            // triggers it by hand — V15 established not relying on that.
+            assertThat(scalarLong(connection, """
+                    SELECT COUNT(*) FROM scheduled_tasks
+                    WHERE type IN ('security.firewall.quarantine.reevaluate',
+                                   'security.firewall.exemption.expiry',
+                                   'security.firewall.facts.resolve')
+                      AND next_run IS NOT NULL
+                      AND cron_expression IS NOT NULL
+                      AND enabled
+                    """)).isEqualTo(3);
         }
     }
 
@@ -386,6 +578,14 @@ class FirewallMigrationTest {
              ResultSet rs = statement.executeQuery(sql)) {
             rs.next();
             return rs.getLong(1);
+        }
+    }
+
+    private static String scalarString(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            assertThat(rs.next()).as("query returned a row: %s", sql).isTrue();
+            return rs.getString(1);
         }
     }
 
