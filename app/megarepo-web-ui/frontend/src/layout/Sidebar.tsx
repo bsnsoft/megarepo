@@ -5,7 +5,7 @@ import type { LicenseStatus, StatusCheck } from '../types/api';
 
 interface SidebarSection {
   label: string;
-  children: { to: string; icon: string; label: string }[];
+  children: { to: string; icon: string; label: string; end?: boolean }[];
 }
 
 const browseLinks = [
@@ -33,7 +33,11 @@ const adminSections: SidebarSection[] = [
       { to: '/admin/ldap', icon: 'server', label: 'LDAP' },
       { to: '/admin/ssl', icon: 'lock', label: 'SSL Certificates' },
       { to: '/admin/anonymous', icon: 'eye', label: 'Anonymous Access' },
-      { to: '/admin/firewall', icon: 'shield-check', label: 'Repository Firewall' },
+      // `end`, or the overview stays highlighted on every firewall sub-page.
+      { to: '/admin/firewall', icon: 'shield-check', label: 'Repository Firewall', end: true },
+      { to: '/admin/firewall/quarantine', icon: 'pause-circle', label: 'Quarantine' },
+      { to: '/admin/firewall/policies', icon: 'clipboard-list', label: 'Firewall Policies' },
+      { to: '/admin/firewall/exemptions', icon: 'unlock', label: 'Exemptions' },
       { to: '/admin/nvd-firewall', icon: 'shield-alert', label: 'NVD Firewall' },
     ],
   },
@@ -71,6 +75,9 @@ function SidebarIcon({ name }: { name: string }) {
     'globe': 'M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18M12 3a15 15 0 000 18',
     'shield-alert': 'M12 2l8.618 3.04A12.02 12.02 0 0121 9c0 5.591-3.824 10.29-9 11.622C6.824 19.29 3 14.591 3 9c0-1.042.133-2.052.382-3.016L12 2zM12 8v4m0 4h.01',
     'shield-check': 'M12 2l8.618 3.04A12.02 12.02 0 0121 9c0 5.591-3.824 10.29-9 11.622C6.824 19.29 3 14.591 3 9c0-1.042.133-2.052.382-3.016L12 2zM9 12l2 2 4-4',
+    'pause-circle': 'M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z',
+    'clipboard-list': 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9h6m-6 4h6',
+    'unlock': 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0',
     'user': 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
     'sign-out': 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',
   };
@@ -83,7 +90,10 @@ function SidebarIcon({ name }: { name: string }) {
 
 function CollapsibleSection({ section }: { section: SidebarSection }) {
   const location = useLocation();
-  const isChildActive = section.children.some((c) => location.pathname === c.to);
+  // startsWith, not equality: the firewall entries have sub-routes (a policy
+  // editor at /admin/firewall/policies/:id), and a section that collapses the
+  // moment you open one of its pages loses the operator their place.
+  const isChildActive = section.children.some((c) => location.pathname.startsWith(c.to));
   const [open, setOpen] = useState(isChildActive);
 
   return (
@@ -111,6 +121,7 @@ function CollapsibleSection({ section }: { section: SidebarSection }) {
             <NavLink
               key={link.to}
               to={link.to}
+              end={link.end}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 pl-9 pr-5 py-2 text-sm font-medium transition-all duration-150 border-l-[3px] ${
                   isActive

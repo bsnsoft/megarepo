@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
+import { assignRepositoryPolicy, policyApi, requiredConfirmationFrom } from '../../api/firewall';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ErrorState from '../../components/ErrorState';
 import { useToast } from '../../components/Toast';
@@ -11,6 +12,11 @@ import type {
   FirewallViolation,
   PageResponse,
 } from '../../types/api';
+import type { FirewallPolicy } from '../../types/firewall';
+import ConfirmPhraseDialog, { type ConfirmPrompt } from './firewall/ConfirmPhraseDialog';
+import FactsDisabledBanner from './firewall/FactsDisabledBanner';
+import FirewallNav from './firewall/FirewallNav';
+import ViolationDetailDialog from './firewall/ViolationDetailDialog';
 
 /**
  * Repository Firewall — the operator's control surface.
@@ -79,6 +85,22 @@ const STATE_STYLE: Record<FirewallEffectiveState, StateStyle> = {
 const formatTimestamp = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString() : '—';
 
+/**
+ * A group holds no components of its own: it routes to a member, and the member
+ * that resolves the request is the one whose mode and policy decide. The server
+ * refuses a non-OFF mode on a group with a 400 rather than storing something
+ * that governs nothing — so the control is disabled here too, with the reason on
+ * the row. Leaving it enabled and letting the request fail would teach the
+ * operator that the firewall is broken, not that groups work differently.
+ */
+const GROUP_TOOLTIP =
+  'Enforcement follows the resolving member. A group routes to its members and holds nothing of ' +
+  'its own, so set the mode and policy on the member repositories instead.';
+
+function isGroup(repository: FirewallRepositoryState): boolean {
+  return (repository.type ?? '').toLowerCase() === 'group';
+}
+
 export default function RepositoryFirewallPage() {
   const { showToast } = useToast();
 
@@ -86,6 +108,8 @@ export default function RepositoryFirewallPage() {
   const [violations, setViolations] = useState<FirewallViolation[]>([]);
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [violationFilter, setViolationFilter] = useState<string>('');
+  const [policies, setPolicies] = useState<FirewallPolicy[] | null>(null);
+  const [openViolation, setOpenViolation] = useState<FirewallViolation | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -128,6 +152,18 @@ export default function RepositoryFirewallPage() {
   useEffect(() => {
     loadViolations(violationFilter);
   }, [loadViolations, violationFilter]);
+
+  /**
+   * The policy list is optional furniture: on a build without the policy
+   * endpoint the column simply does not appear, and the rest of the page — which
+   * is the part that says whether anything is being blocked — is unaffected.
+   */
+  useEffect(() => {
+    policyApi
+      .list()
+      .then(setPolicies)
+      .catch(() => setPolicies(null));
+  }, []);
 
   async function loadMoreViolations() {
     if (!nextToken) return;
@@ -174,6 +210,56 @@ export default function RepositoryFirewallPage() {
       showToast('success', `${repository.repositoryName} set to ${MODE_LABEL[mode]}`);
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : 'Failed to change mode');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Assigning a policy to a repository. A repository policy *replaces* the
+   * default — it does not stack on top of it — which is the sentence next to the
+   * control, because the opposite assumption is the natural one and it is wrong.
+   *
+   * Like arming, this can change what an enforcing repository denies, so the
+   * server may demand a typed confirmation. The phrase comes back in the
+   * server's own rejection rather than from a constant here.
+   */
+  async function writePolicy(
+    repository: FirewallRepositoryState,
+    policyId: string | null,
+    confirmation?: string,
+  ) {
+    setBusy(true);
+    try {
+      await assignRepositoryPolicy(repository.repositoryId, {
+        policyId,
+        failMode: repository.failMode,
+        confirmation,
+      });
+      await loadOverview();
+      const policyName = policies?.find((policy) => policy.id === policyId)?.name;
+      showToast(
+        'success',
+        policyId
+          ? `${repository.repositoryName} now uses ${policyName ?? 'the selected policy'} instead of the default.`
+          : `${repository.repositoryName} falls back to the default policy.`,
+      );
+      setConfirmPrompt(null);
+    } catch (e) {
+      const phrase = requiredConfirmationFrom(e);
+      if (phrase && !confirmation) {
+        setConfirmPrompt({
+          title: `Change the policy for ${repository.repositoryName}?`,
+          body:
+            'The repository is enforcing, so what it refuses changes as soon as you confirm. ' +
+            'A repository policy replaces the instance default; it is not added to it.',
+          phrase,
+          confirmLabel: 'Change policy',
+          onConfirm: (typed) => writePolicy(repository, policyId, typed),
+        });
+      } else {
+        showToast('error', e instanceof Error ? e.message : 'Failed to change the policy');
+      }
     } finally {
       setBusy(false);
     }
@@ -256,6 +342,9 @@ export default function RepositoryFirewallPage() {
           nothing is blocked before then.
         </p>
       </div>
+
+      <FirewallNav />
+      <FactsDisabledBanner factsEnabled={overview.factsEnabled} />
 
       {/* ── The one thing nobody may misread ─────────────────────────── */}
       <div
@@ -366,7 +455,9 @@ export default function RepositoryFirewallPage() {
           <p className="text-xs text-gray-500 mb-4">
             <strong>Mode</strong> is what the repository is configured to do.{' '}
             <strong>Effective</strong> is what it actually does right now, given the enforcement
-            switch above. They differ whenever Quarantine is configured on a passive instance.
+            switch above. They differ whenever Quarantine is configured on a passive instance.{' '}
+            <strong>Policy</strong> is which rule set decides — a policy chosen here{' '}
+            <em>replaces</em> the instance default rather than adding to it.
           </p>
 
           {repositories.length === 0 ? (
@@ -378,6 +469,7 @@ export default function RepositoryFirewallPage() {
                   <tr className="text-left text-xs font-medium text-gray-500 border-b border-gray-200">
                     <th className="py-2 pr-4">Repository</th>
                     <th className="py-2 pr-4">Mode</th>
+                    {policies && <th className="py-2 pr-4">Policy</th>}
                     <th className="py-2 pr-4">Effective</th>
                     <th className="py-2 pr-4">Findings ({violationWindowDays}d)</th>
                     <th className="py-2">Changed</th>
@@ -386,6 +478,7 @@ export default function RepositoryFirewallPage() {
                 <tbody>
                   {repositories.map((repository) => {
                     const style = STATE_STYLE[repository.effectiveState];
+                    const group = isGroup(repository);
                     return (
                       <tr key={repository.repositoryId} className="border-b border-gray-100">
                         <td className="py-2.5 pr-4">
@@ -396,22 +489,49 @@ export default function RepositoryFirewallPage() {
                         </td>
                         <td className="py-2.5 pr-4">
                           <select
-                            value={repository.mode}
-                            disabled={busy}
+                            value={group ? 'OFF' : repository.mode}
+                            disabled={busy || group}
+                            aria-label={`Mode for ${repository.repositoryName}`}
                             onChange={(e) =>
                               handleModeChange(repository, e.target.value as FirewallMode)
                             }
-                            title={MODE_HINT[repository.mode]}
-                            className="px-2 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50"
+                            title={group ? GROUP_TOOLTIP : MODE_HINT[repository.mode]}
+                            className="px-2 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:bg-gray-50"
                           >
                             <option value="OFF">Off</option>
                             <option value="AUDIT">Audit</option>
                             <option value="QUARANTINE">Quarantine</option>
                           </select>
-                          {!repository.configured && (
-                            <div className="text-[11px] text-gray-400 mt-0.5">instance default</div>
+                          {group ? (
+                            <div className="text-[11px] text-gray-500 mt-0.5 max-w-48">
+                              follows the resolving member
+                            </div>
+                          ) : (
+                            !repository.configured && (
+                              <div className="text-[11px] text-gray-400 mt-0.5">instance default</div>
+                            )
                           )}
                         </td>
+                        {policies && (
+                          <td className="py-2.5 pr-4">
+                            <select
+                              value={repository.policyId ?? ''}
+                              disabled={busy || group}
+                              aria-label={`Policy for ${repository.repositoryName}`}
+                              title={group ? GROUP_TOOLTIP : undefined}
+                              onChange={(e) => writePolicy(repository, e.target.value || null)}
+                              className="px-2 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:bg-gray-50"
+                            >
+                              <option value="">Instance default</option>
+                              {policies.map((policy) => (
+                                <option key={policy.id} value={policy.id}>
+                                  {policy.name}
+                                  {policy.isDefault ? ' (default)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        )}
                         <td className="py-2.5 pr-4">
                           <span
                             className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-semibold ${style.className}`}
@@ -497,8 +617,19 @@ export default function RepositoryFirewallPage() {
                           {formatTimestamp(violation.occurredAt)}
                         </td>
                         <td className="py-2 pr-4 text-gray-700 text-xs">{violation.repositoryName}</td>
-                        <td className="py-2 pr-4 font-mono text-xs text-gray-700 break-all">
-                          {violation.purl}
+                        <td className="py-2 pr-4 font-mono text-xs break-all">
+                          {/*
+                            The row is a summary; the detail behind it is where a
+                            disagreement gets settled — which advisories, from which
+                            sources, at what confidence, and for a license verdict the
+                            exact string the component declared.
+                          */}
+                          <button
+                            onClick={() => setOpenViolation(violation)}
+                            className="text-left text-blue-700 hover:underline break-all"
+                          >
+                            {violation.purl}
+                          </button>
                         </td>
                         <td className="py-2 pr-4 text-xs text-gray-600">{violation.ruleType}</td>
                         <td className="py-2 pr-4">
@@ -546,6 +677,13 @@ export default function RepositoryFirewallPage() {
         </div>
       </div>
 
+      {openViolation && (
+        <ViolationDetailDialog
+          violation={openViolation}
+          onClose={() => setOpenViolation(null)}
+        />
+      )}
+
       {confirmPrompt && (
         <ConfirmPhraseDialog
           prompt={confirmPrompt}
@@ -558,89 +696,6 @@ export default function RepositoryFirewallPage() {
           }}
         />
       )}
-    </div>
-  );
-}
-
-interface ConfirmPrompt {
-  title: string;
-  body: string;
-  /** Exact text the operator has to reproduce; also what the API demands. */
-  phrase: string;
-  confirmLabel: string;
-  onConfirm: (phrase: string) => void;
-}
-
-/**
- * A confirmation the operator has to type out.
- *
- * Deliberately heavier than the app's ConfirmDialog, which is right for deleting
- * a thing you are looking at: the consequence is immediate and lands on the
- * person clicking. Arming the firewall is the opposite — nothing visibly happens
- * here, and the failure surfaces hours later in somebody else's pipeline. Typing
- * the phrase forces the reader through the sentence describing what will happen,
- * and naming the repository makes arming the wrong row in a list of identical
- * dropdowns impossible rather than merely unlikely.
- *
- * The same phrase is required by the API, so scripts and curl get the same
- * guard; this dialog is the human end of it, not the guard itself.
- */
-function ConfirmPhraseDialog({
-  prompt,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  prompt: ConfirmPrompt;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: (phrase: string) => void;
-}) {
-  const [typed, setTyped] = useState('');
-  const matches = typed.trim() === prompt.phrase;
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center z-[1000] animate-[fadeIn_0.15s_ease]"
-      onClick={onCancel}
-    >
-      <div
-        className="bg-white rounded-lg p-6 w-[520px] max-w-[92vw] shadow-lg animate-[slideUp_0.15s_ease]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-base font-semibold mb-2 text-gray-900">{prompt.title}</h3>
-        <p className="text-sm text-gray-600 leading-relaxed mb-4">{prompt.body}</p>
-
-        <label htmlFor="firewall-confirm-phrase" className="block text-xs text-gray-500 mb-1.5">
-          Type <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-gray-800">{prompt.phrase}</code>{' '}
-          to continue.
-        </label>
-        <input
-          id="firewall-confirm-phrase"
-          type="text"
-          autoFocus
-          autoComplete="off"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono mb-5"
-        />
-
-        <div className="flex gap-2 justify-end">
-          <button
-            className="inline-flex items-center justify-center px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-          <button
-            className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            disabled={!matches || busy}
-            onClick={() => onConfirm(typed.trim())}
-          >
-            {prompt.confirmLabel}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
