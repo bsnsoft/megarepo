@@ -83,6 +83,13 @@ endpoints and rotate accordingly.
   cleartext, let the firewall be switched off with a `PUT`, and let the whitelist
   be written. Now `nx-admin`. Rotate the API key if an affected version was
   reachable by non-administrators. (osTicket #155155)
+- **The build now refuses an endpoint nobody decided about** — every HTTP
+  endpoint is enumerated out of Spring's handler mapping and checked against an
+  inventory that records, per endpoint, who may call it and why. An endpoint that
+  is merely swept up by the blanket `/api/v1/**` rule counts as undecided and has
+  to say so in as many words. A new controller therefore costs one deliberate
+  line — or the build fails, naming the class. This is what closes the class of
+  bug the three findings above belong to. (osTicket #155155)
 - **Operational administration and artifact deletion required no privilege** —
   running a scheduled task (which includes cleanup, and therefore deletes
   artifacts), reading blob stores (whose `GET` returned the S3
