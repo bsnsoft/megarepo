@@ -1,12 +1,7 @@
 package de.bsnsoft.megarepo.it;
 
-import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
-import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
-import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -14,7 +9,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
-import java.time.Instant;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,40 +27,18 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 class RawRepositoryIntegrationTest extends BaseIntegrationTest {
 
     private static final String REPO_NAME = "raw-integration-test";
-    private static final String BLOB_STORE_NAME = "default";
 
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
-
-    @Autowired
-    private BlobStoreJpaRepository blobStoreJpaRepository;
-
+    /**
+     * Find-or-create the fixture repository and empty it, so the uploads below are the
+     * first ones at their paths — the same file uploaded by an earlier run against this
+     * shared database would make {@code uploadAndDownloadFile} assert against an
+     * overwrite instead of a create.
+     */
     @BeforeEach
     void setUp() {
-        // Ensure the default blob store exists (seed data creates it, but be safe)
-        if (blobStoreJpaRepository.findById(BLOB_STORE_NAME).isEmpty()) {
-            var blobStore = new BlobStoreEntity();
-            blobStore.setName(BLOB_STORE_NAME);
-            blobStore.setType("file");
-            blobStore.setConfig(Map.of("path", "data/blobs/default"));
-            blobStore.setCreatedAt(Instant.now());
-            blobStore.setUpdatedAt(Instant.now());
-            blobStoreJpaRepository.save(blobStore);
-        }
-
-        // Create a raw hosted repository for testing if it doesn't exist
-        if (repositoryJpaRepository.findByName(REPO_NAME).isEmpty()) {
-            var repo = new RepositoryEntity();
-            repo.setName(REPO_NAME);
-            repo.setFormat("raw");
-            repo.setType("HOSTED");
-            repo.setOnline(true);
-            repo.setBlobStoreName(BLOB_STORE_NAME);
-            repo.setAttributes(Map.of("writePolicy", "ALLOW"));
-            repo.setCreatedAt(Instant.now());
-            repo.setUpdatedAt(Instant.now());
-            repositoryJpaRepository.save(repo);
-        }
+        ensureDefaultBlobStore();
+        purgeRepositoryContent(
+                ensureRepository(REPO_NAME, "raw", "HOSTED", Map.of("writePolicy", "ALLOW")));
     }
 
     @Test

@@ -1,10 +1,8 @@
 package de.bsnsoft.megarepo.it;
 
-import de.bsnsoft.megarepo.database.repository.AnonymousAccessJpaRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -32,9 +30,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AuthChallengeIntegrationTest extends BaseIntegrationTest {
 
-    @Autowired
-    private AnonymousAccessJpaRepository anonymousAccessJpaRepository;
-
     private Boolean originalAnonymousEnabled;
 
     /**
@@ -42,6 +37,10 @@ class AuthChallengeIntegrationTest extends BaseIntegrationTest {
      * repository requests as the anonymous user — they never reach the 401
      * entry point. Disable it so the challenge behavior can be observed, and
      * restore the original setting afterwards.
+     *
+     * <p>This is the only global setting the suite touches; the base class puts it
+     * back to "enabled" before every test, so a run killed in the middle of this
+     * class cannot leave the shared database in a state that breaks the next one.
      */
     @BeforeEach
     void disableAnonymousAccess() {

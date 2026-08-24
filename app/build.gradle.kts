@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.spotless) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.spring.dependency.management) apply false
-    id("org.owasp.dependencycheck") version "12.1.1"
+    id("org.owasp.dependencycheck") version "12.2.2"
 }
 
 dependencyCheck {
@@ -35,11 +35,14 @@ subprojects {
             }
             dependencies {
                 // Override Tomcat to fix CVE-2026-34483, CVE-2026-34486, CVE-2026-34487, CVE-2026-34500
-                dependency("org.apache.tomcat.embed:tomcat-embed-core:10.1.54")
-                dependency("org.apache.tomcat.embed:tomcat-embed-el:10.1.54")
-                dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.54")
-                // Fix CVE-2025-48924 (uncontrolled recursion in ClassUtils)
-                dependency("org.apache.commons:commons-lang3:3.18.0")
+                // NOTE: an explicit version here WINS over the Spring Boot BOM, so this must never
+                // fall behind the BOM's tomcat.version (3.5.16 manages 10.1.55).
+                dependency("org.apache.tomcat.embed:tomcat-embed-core:10.1.59")
+                dependency("org.apache.tomcat.embed:tomcat-embed-el:10.1.59")
+                dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.59")
+                // Fix CVE-2025-48924 (uncontrolled recursion in ClassUtils);
+                // still required, the BOM only manages 3.17.0.
+                dependency("org.apache.commons:commons-lang3:3.20.0")
             }
         }
 

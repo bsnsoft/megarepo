@@ -126,6 +126,27 @@ public class UserService {
         userJpaRepository.save(entity);
     }
 
+    /**
+     * Verify a user's local password without changing anything. Used to gate
+     * access to sensitive account data (e.g. revealing the NuGet API key),
+     * mirroring how Sonatype Nexus re-prompts for the password before showing
+     * a user's token.
+     *
+     * <p>Returns {@code false} for users that have no local password hash (e.g.
+     * LDAP-backed accounts), since their credentials cannot be verified here.
+     */
+    public boolean verifyPassword(String userId, String password) {
+        if (password == null || password.isEmpty()) {
+            return false;
+        }
+        return userJpaRepository
+                .findById(userId)
+                .map(UserEntity::getPasswordHash)
+                .filter(hash -> hash != null && !hash.isBlank())
+                .map(hash -> passwordEncoder.matches(password, hash))
+                .orElse(false);
+    }
+
     public List<UserEntity> findAll() {
         return userJpaRepository.findAll();
     }

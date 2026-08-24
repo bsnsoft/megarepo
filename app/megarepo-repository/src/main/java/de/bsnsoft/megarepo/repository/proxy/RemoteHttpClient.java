@@ -23,6 +23,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.GZIPInputStream;
 
 @Component
 public class RemoteHttpClient {
@@ -154,9 +155,13 @@ public class RemoteHttpClient {
 
     public RemoteResponse fetchWithAuth(
             String remoteUrl, String username, String password) throws IOException {
-        String credentials = username + ":" + password;
-        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
-        return fetch(remoteUrl, Map.of("Authorization", "Basic " + encoded));
+        return fetchWithAuth(remoteUrl, username, password, Map.of());
+    }
+
+    public RemoteResponse fetchWithAuth(
+            String remoteUrl, String username, String password, Map<String, String> extraHeaders)
+            throws IOException {
+        return fetch(remoteUrl, withBasicAuth(username, password, extraHeaders));
     }
 
     /**
@@ -164,9 +169,34 @@ public class RemoteHttpClient {
      */
     public RemoteResponse fetchWithAuthViaProxy(
             String remoteUrl, String username, String password, HttpProxyConfig proxyConfig) throws IOException {
+        return fetchWithAuthViaProxy(remoteUrl, username, password, proxyConfig, Map.of());
+    }
+
+    public RemoteResponse fetchWithAuthViaProxy(
+            String remoteUrl,
+            String username,
+            String password,
+            HttpProxyConfig proxyConfig,
+            Map<String, String> extraHeaders)
+            throws IOException {
+        return fetchViaProxy(remoteUrl, withBasicAuth(username, password, extraHeaders), proxyConfig);
+    }
+
+    /**
+     * Combines caller-supplied headers with an upstream Basic {@code Authorization} header.
+     * The credentials always win, so a format can never accidentally drop upstream auth.
+     */
+    private static Map<String, String> withBasicAuth(
+            String username, String password, Map<String, String> extraHeaders) {
         String credentials = username + ":" + password;
-        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
-        return fetchViaProxy(remoteUrl, Map.of("Authorization", "Basic " + encoded), proxyConfig);
+        String encoded = Base64.getEncoder()
+                .encodeToString(credentials.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Map<String, String> headers = new java.util.HashMap<>();
+        if (extraHeaders != null) {
+            headers.putAll(extraHeaders);
+        }
+        headers.put("Authorization", "Basic " + encoded);
+        return headers;
     }
 
     private RemoteResponse doFetch(
@@ -177,6 +207,11 @@ public class RemoteHttpClient {
                 .uri(URI.create(remoteUrl))
                 .GET()
                 .header("User-Agent", userAgent)
+                // The JDK HttpClient neither advertises nor negotiates compression on its
+                // own. Asking for gzip and inflating the body here cuts upstream transfer
+                // dramatically for text metadata — an npm packument such as
+                // @typescript-eslint/parser is ~15 MB raw but ~2.9 MB gzipped (GitHub #1).
+                .header("Accept-Encoding", "gzip")
                 .timeout(readTimeout);
 
         if (extraHeaders != null) {
@@ -207,9 +242,17 @@ public class RemoteHttpClient {
                         .firstValue("Content-Type")
                         .orElse("application/octet-stream");
 
+                InputStream body = response.body();
+                if (isGzipEncoded(response) && body != null) {
+                    body = new GZIPInputStream(body);
+                    // Content-Length described the compressed payload; it no longer
+                    // matches the stream the caller will read.
+                    contentLength = -1;
+                }
+
                 return new RemoteResponse(
                         response.statusCode(),
-                        response.body(),
+                        body,
                         contentLength,
                         contentType);
             } catch (HttpTimeoutException e) {
@@ -241,6 +284,18 @@ public class RemoteHttpClient {
         throw new UpstreamTimeoutException(
                 "Upstream timeout after %d attempt(s) for URL: %s".formatted(retryOnTimeout + 1, remoteUrl),
                 lastTimeout);
+    }
+
+    /**
+     * Returns {@code true} when the upstream body is gzip-encoded and must be inflated
+     * before it reaches the caller. Only {@code gzip} is negotiated (see the request
+     * header set in {@link #doFetch}), so no other encoding is expected here.
+     */
+    private static boolean isGzipEncoded(HttpResponse<?> response) {
+        return response.headers()
+                .firstValue("Content-Encoding")
+                .map(encoding -> encoding.trim().equalsIgnoreCase("gzip"))
+                .orElse(false);
     }
 
     private HttpClient getOrCreateProxyClient(HttpProxyConfig config) {

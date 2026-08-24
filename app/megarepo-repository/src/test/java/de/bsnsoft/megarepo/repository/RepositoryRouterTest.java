@@ -547,6 +547,30 @@ class RepositoryRouterTest {
         verify(response).sendError(eq(400), anyString());
     }
 
+    /**
+     * A strong ETag stops the servlet container from compressing a response, because
+     * compression would break the byte-for-byte promise a strong validator makes. Text
+     * metadata is exactly what benefits most from compression, so it must get a weak
+     * validator instead — otherwise npm packuments go out uncompressed (GitHub #1).
+     */
+    @Test
+    void compressibleContentTypes_areRecognised() {
+        assertTrue(RepositoryRouter.isCompressibleContentType("application/json"));
+        assertTrue(RepositoryRouter.isCompressibleContentType("application/json;charset=utf-8"));
+        assertTrue(RepositoryRouter.isCompressibleContentType("APPLICATION/JSON"));
+        assertTrue(RepositoryRouter.isCompressibleContentType("text/html"));
+        assertTrue(RepositoryRouter.isCompressibleContentType("application/xml"));
+        assertTrue(RepositoryRouter.isCompressibleContentType("application/vnd.npm.install-v1+json"));
+    }
+
+    @Test
+    void binaryContentTypes_areNotCompressible() {
+        assertFalse(RepositoryRouter.isCompressibleContentType("application/octet-stream"));
+        assertFalse(RepositoryRouter.isCompressibleContentType("application/gzip"));
+        assertFalse(RepositoryRouter.isCompressibleContentType("image/png"));
+        assertFalse(RepositoryRouter.isCompressibleContentType(null));
+    }
+
     private static class TestServletOutputStream extends ServletOutputStream {
         private final ByteArrayOutputStream delegate;
 

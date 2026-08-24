@@ -10,6 +10,7 @@ import de.bsnsoft.megarepo.core.storage.BlobRef;
 import de.bsnsoft.megarepo.core.storage.BlobStore;
 import de.bsnsoft.megarepo.database.entity.AssetEntity;
 import de.bsnsoft.megarepo.database.repository.AssetJpaRepository;
+import de.bsnsoft.megarepo.format.npm.proxy.NpmProxyUrlRewriter;
 import de.bsnsoft.megarepo.format.npm.publish.NpmPublishHandler;
 import de.bsnsoft.megarepo.format.npm.registry.NpmPackageMetadataBuilder;
 import de.bsnsoft.megarepo.storage.BlobStoreManager;
@@ -66,7 +67,13 @@ class NpmRequestHandlerTest {
     @BeforeEach
     void setUp() {
         NpmCoordinateExtractor extractor = new NpmCoordinateExtractor();
-        handler = new NpmRequestHandler(assetRepository, blobStoreManager, metadataBuilder, publishHandler, extractor);
+        handler = new NpmRequestHandler(
+                assetRepository,
+                blobStoreManager,
+                metadataBuilder,
+                publishHandler,
+                extractor,
+                new NpmProxyUrlRewriter());
     }
 
     @Test

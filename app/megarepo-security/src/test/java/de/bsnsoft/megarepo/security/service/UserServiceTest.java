@@ -134,4 +134,39 @@ class UserServiceTest {
 
         verify(userJpaRepository).deleteById("toDelete");
     }
+
+    @Test
+    void verifyPassword_trueForCorrectPassword() {
+        UserEntity user = new UserEntity();
+        user.setUserId("alice");
+        user.setPasswordHash(passwordEncoder.encode("s3cret"));
+        when(userJpaRepository.findById("alice")).thenReturn(Optional.of(user));
+
+        assertTrue(userService.verifyPassword("alice", "s3cret"));
+    }
+
+    @Test
+    void verifyPassword_falseForWrongPassword() {
+        UserEntity user = new UserEntity();
+        user.setUserId("alice");
+        user.setPasswordHash(passwordEncoder.encode("s3cret"));
+        when(userJpaRepository.findById("alice")).thenReturn(Optional.of(user));
+
+        org.junit.jupiter.api.Assertions.assertFalse(userService.verifyPassword("alice", "wrong"));
+    }
+
+    @Test
+    void verifyPassword_falseForLdapUserWithoutHash() {
+        UserEntity ldap = new UserEntity();
+        ldap.setUserId("bob");
+        ldap.setPasswordHash(null);
+        when(userJpaRepository.findById("bob")).thenReturn(Optional.of(ldap));
+
+        org.junit.jupiter.api.Assertions.assertFalse(userService.verifyPassword("bob", "anything"));
+    }
+
+    @Test
+    void verifyPassword_falseForEmptyInput() {
+        org.junit.jupiter.api.Assertions.assertFalse(userService.verifyPassword("alice", ""));
+    }
 }

@@ -64,10 +64,14 @@ export default function AccountPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
 
-  // NuGet API key (= the MegaRepo access token)
+  // NuGet API key (= the MegaRepo access token / bearer token)
   const [apiKey, setApiKey] = useState<string | null>(() => api.getToken());
   const [revealKey, setRevealKey] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  // Password gate before the key may be shown or copied (Sonatype-style).
+  const [keyUnlocked, setKeyUnlocked] = useState(false);
+  const [confirmPasswordForKey, setConfirmPasswordForKey] = useState('');
+  const [unlockingKey, setUnlockingKey] = useState(false);
 
   function loadProfile() {
     setLoading(true);
@@ -163,8 +167,34 @@ export default function AccountPage() {
     }
   }
 
+  async function handleUnlockKey() {
+    if (!confirmPasswordForKey) {
+      showToast('error', 'Enter your password to reveal the key');
+      return;
+    }
+    setUnlockingKey(true);
+    try {
+      // Re-verify the password server-side before exposing the key (Sonatype-style).
+      await api.post('/security/users/me/verify-password', { password: confirmPasswordForKey });
+      setKeyUnlocked(true);
+      setRevealKey(true);
+      setConfirmPasswordForKey('');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Password is incorrect';
+      showToast('error', message);
+    } finally {
+      setUnlockingKey(false);
+    }
+  }
+
+  function lockKey() {
+    setKeyUnlocked(false);
+    setRevealKey(false);
+    setConfirmPasswordForKey('');
+  }
+
   async function handleCopyKey() {
-    if (!apiKey) return;
+    if (!apiKey || !keyUnlocked) return;
     try {
       await navigator.clipboard.writeText(apiKey);
       showToast('success', 'API key copied to clipboard');
@@ -186,6 +216,8 @@ export default function AccountPage() {
       const res = await api.post<TokenResponse>('/security/auth/regenerate-token');
       api.setToken(res.token); // keep the UI session on the fresh token
       setApiKey(res.token);
+      // The user just generated this key, so show it immediately (no re-prompt).
+      setKeyUnlocked(true);
       setRevealKey(true);
       showToast('success', 'New API key generated');
     } catch (err: unknown) {
@@ -336,49 +368,94 @@ export default function AccountPage() {
           </div>
         </div>
 
-        {/* API Key (NuGet / npm / Maven) */}
+        {/* NuGet API Key (also npm / Maven bearer token) */}
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-            <h2 className="text-sm font-semibold text-gray-700">API Key</h2>
+            <h2 className="text-sm font-semibold text-gray-700">NuGet API Key</h2>
           </div>
           <div className="p-6 space-y-4">
             <p className="text-sm text-gray-600">
-              Your API key is your personal access token. Use it as the{' '}
-              <span className="font-medium text-gray-800">NuGet API key</span>{' '}
-              (<code className="px-1 py-0.5 bg-gray-100 rounded text-[13px]">dotnet nuget push --api-key</code>),
-              and as the bearer token / password for npm and Maven. Treat it like a
-              password — anyone with this key can act as you.
+              Your API key is your personal access token. It is a{' '}
+              <span className="font-medium text-gray-800">bearer token</span>: NuGet sends it as{' '}
+              <code className="px-1 py-0.5 bg-gray-100 rounded text-[13px]">X-NuGet-ApiKey</code>, and it
+              also works as the <code className="px-1 py-0.5 bg-gray-100 rounded text-[13px]">Authorization: Bearer</code>{' '}
+              token / password for npm and Maven. Use it with{' '}
+              <code className="px-1 py-0.5 bg-gray-100 rounded text-[13px]">dotnet nuget push --api-key</code>.
+              Treat it like a password — anyone with this key can act as you.
             </p>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Current API key</label>
-              <div className="flex items-stretch gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={apiKey ? (revealKey ? apiKey : maskedKey(apiKey)) : 'Unavailable — please log in again'}
-                  style={{ ...inputStyle, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '13px' }}
-                  className="flex-1"
-                  onFocus={(e) => e.currentTarget.select()}
-                />
-                <button
-                  type="button"
-                  className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
-                  onClick={() => setRevealKey((v) => !v)}
-                  disabled={!apiKey}
-                >
-                  {revealKey ? 'Hide' : 'Show'}
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
-                  onClick={handleCopyKey}
-                  disabled={!apiKey}
-                >
-                  Copy
-                </button>
+            {!keyUnlocked ? (
+              <div className="rounded-md border border-gray-200 bg-gray-50/60 px-4 py-4 space-y-3">
+                <label className="block text-sm font-medium text-gray-700">
+                  Confirm your password to reveal the key
+                </label>
+                <div className="flex items-stretch gap-2">
+                  <input
+                    type="password"
+                    value={confirmPasswordForKey}
+                    onChange={(e) => setConfirmPasswordForKey(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleUnlockKey();
+                    }}
+                    placeholder="Your account password"
+                    autoComplete="current-password"
+                    style={inputStyle}
+                    className={`flex-1 ${inputFocusClass}`}
+                    disabled={!apiKey || unlockingKey}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleUnlockKey}
+                    disabled={!apiKey || unlockingKey || !confirmPasswordForKey}
+                  >
+                    {unlockingKey ? 'Verifying...' : 'Reveal key'}
+                  </button>
+                </div>
+                {!apiKey && (
+                  <p className="text-[13px] text-gray-500">Key unavailable — please log in again.</p>
+                )}
               </div>
-            </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-medium text-gray-700">Your API key</label>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                    onClick={lockKey}
+                  >
+                    Lock
+                  </button>
+                </div>
+                <div className="flex items-stretch gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={apiKey ? (revealKey ? apiKey : maskedKey(apiKey)) : ''}
+                    style={{ ...inputStyle, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '13px' }}
+                    className="flex-1"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
+                    onClick={() => setRevealKey((v) => !v)}
+                    disabled={!apiKey}
+                  >
+                    {revealKey ? 'Hide' : 'Show'}
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
+                    onClick={handleCopyKey}
+                    disabled={!apiKey}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-[13px] text-amber-800">
               Resetting issues a fresh key for this account. For security, tokens are

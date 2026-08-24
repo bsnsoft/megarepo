@@ -1,11 +1,7 @@
 package de.bsnsoft.megarepo.it;
 
-import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
-import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -14,7 +10,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -30,25 +25,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
 
-    private static final String BLOB_STORE_NAME = "default";
+    private static final String BLOB_STORE_NAME = DEFAULT_BLOB_STORE;
 
-    @Autowired
-    private BlobStoreJpaRepository blobStoreJpaRepository;
+    /** Created by {@link #fullWorkflow()} and deleted again at the end of it. */
+    private static final String WORKFLOW_REPO_NAME = "test-raw-workflow";
 
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
+    /** Created by {@link #blobStoreWorkflow()}. */
+    private static final String WORKFLOW_BLOB_STORE_NAME = "test-blobstore";
 
+    /** Created by {@link #authWorkflow()}. */
+    private static final String WORKFLOW_USER_ID = "testuser";
+
+    /**
+     * Every test in this class creates a fixed-name resource and asserts {@code 201 CREATED},
+     * so each one has to start from a state where that name is free — including after a run
+     * that already created it against this same, never-reset database.
+     */
     @BeforeEach
     void setUp() {
-        if (blobStoreJpaRepository.findById(BLOB_STORE_NAME).isEmpty()) {
-            var blobStore = new BlobStoreEntity();
-            blobStore.setName(BLOB_STORE_NAME);
-            blobStore.setType("file");
-            blobStore.setConfig(Map.of("path", "data/blobs/default"));
-            blobStore.setCreatedAt(Instant.now());
-            blobStore.setUpdatedAt(Instant.now());
-            blobStoreJpaRepository.save(blobStore);
-        }
+        ensureDefaultBlobStore();
+        deleteRepositoryIfExists(WORKFLOW_REPO_NAME);
+        deleteBlobStoreIfExists(WORKFLOW_BLOB_STORE_NAME);
+        deleteUserIfExists(WORKFLOW_USER_ID);
     }
 
     @Test
@@ -61,7 +59,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
         // 2. Create a raw hosted repository
         HttpHeaders authHeaders = authHeaders(token);
         Map<String, Object> createRepoBody = Map.of(
-                "name", "test-raw-workflow",
+                "name", WORKFLOW_REPO_NAME,
                 "format", "raw",
                 "type", "HOSTED",
                 "online", true,
@@ -79,7 +77,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
         HttpHeaders uploadHeaders = new HttpHeaders();
         uploadHeaders.setContentType(MediaType.TEXT_PLAIN);
         ResponseEntity<String> uploadResponse = restTemplate.exchange(
-                repositoryUrl("test-raw-workflow", "hello.txt"),
+                repositoryUrl(WORKFLOW_REPO_NAME, "hello.txt"),
                 HttpMethod.PUT,
                 new HttpEntity<>("Hello World", uploadHeaders),
                 String.class);
@@ -87,7 +85,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
 
         // 4. Download the file
         ResponseEntity<String> downloadResponse =
-                restTemplate.getForEntity(repositoryUrl("test-raw-workflow", "hello.txt"), String.class);
+                restTemplate.getForEntity(repositoryUrl(WORKFLOW_REPO_NAME, "hello.txt"), String.class);
         assertEquals(HttpStatus.OK, downloadResponse.getStatusCode(), "Download should return 200");
         assertEquals("Hello World", downloadResponse.getBody(), "Downloaded content should match uploaded content");
 
@@ -101,7 +99,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
 
         // 6. List components
         ResponseEntity<Map<String, Object>> componentsResponse = restTemplate.exchange(
-                baseUrl() + "/api/v1/components?repository=test-raw-workflow",
+                baseUrl() + "/api/v1/components?repository=" + WORKFLOW_REPO_NAME,
                 HttpMethod.GET,
                 new HttpEntity<>(authHeaders),
                 new ParameterizedTypeReference<>() {});
@@ -109,7 +107,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
 
         // 7. Delete the repository
         ResponseEntity<Void> deleteResponse = restTemplate.exchange(
-                baseUrl() + "/api/v1/repositories/test-raw-workflow",
+                baseUrl() + "/api/v1/repositories/" + WORKFLOW_REPO_NAME,
                 HttpMethod.DELETE,
                 new HttpEntity<>(authHeaders),
                 Void.class);
@@ -146,7 +144,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
 
         // 4. Create a user with a role
         Map<String, Object> createUserBody = Map.of(
-                "userId", "testuser",
+                "userId", WORKFLOW_USER_ID,
                 "firstName", "Test",
                 "lastName", "User",
                 "emailAddress", "test@example.com",
@@ -165,7 +163,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
                 "User creation should return 201");
 
         // 5. Login as the new user
-        String newUserToken = login("testuser", "testpass123");
+        String newUserToken = login(WORKFLOW_USER_ID, "testpass123");
         assertNotNull(newUserToken, "New user token should not be null");
     }
 
@@ -187,7 +185,7 @@ class ApiWorkflowIntegrationTest extends BaseIntegrationTest {
         int initialSize = listResponse.getBody().size();
 
         // 2. Create a new file blob store
-        Map<String, Object> createBody = Map.of("name", "test-blobstore", "path", "/tmp/test-blobs");
+        Map<String, Object> createBody = Map.of("name", WORKFLOW_BLOB_STORE_NAME, "path", "/tmp/test-blobs");
 
         ResponseEntity<Map<String, Object>> createResponse = restTemplate.exchange(
                 baseUrl() + "/api/v1/blobstores/file",

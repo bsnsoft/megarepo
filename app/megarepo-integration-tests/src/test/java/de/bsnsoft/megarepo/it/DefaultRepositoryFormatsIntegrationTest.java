@@ -2,7 +2,6 @@ package de.bsnsoft.megarepo.it;
 
 import de.bsnsoft.megarepo.core.format.FormatRegistry;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpMethod;
@@ -38,9 +37,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  * </ol>
  */
 class DefaultRepositoryFormatsIntegrationTest extends BaseIntegrationTest {
-
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
 
     @Autowired
     private FormatRegistry formatRegistry;

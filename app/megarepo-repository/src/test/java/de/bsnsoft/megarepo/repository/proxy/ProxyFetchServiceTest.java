@@ -447,7 +447,8 @@ class ProxyFetchServiceTest {
 
         var remoteResponse = new RemoteHttpClient.RemoteResponse(
                 200, new ByteArrayInputStream(content), content.length, "application/octet-stream");
-        when(remoteHttpClient.fetchWithAuth(eq(REMOTE_URL + "/" + path), eq("myuser"), eq("mypass")))
+        when(remoteHttpClient.fetchWithAuth(
+                        eq(REMOTE_URL + "/" + path), eq("myuser"), eq("mypass"), any()))
                 .thenReturn(remoteResponse);
 
         when(blobStoreManager.get("default")).thenReturn(blobStore);
@@ -462,7 +463,7 @@ class ProxyFetchServiceTest {
         assertTrue(result.isPresent());
         assertInstanceOf(ContentResponse.class, result.get());
         // Verify that fetchWithAuth was called (not plain fetch)
-        verify(remoteHttpClient).fetchWithAuth(anyString(), eq("myuser"), eq("mypass"));
+        verify(remoteHttpClient).fetchWithAuth(anyString(), eq("myuser"), eq("mypass"), any());
         verify(remoteHttpClient, never()).fetch(anyString(), any());
     }
 
@@ -486,7 +487,8 @@ class ProxyFetchServiceTest {
 
         var remoteResponse = new RemoteHttpClient.RemoteResponse(
                 200, new ByteArrayInputStream(content), content.length, "application/octet-stream");
-        when(remoteHttpClient.fetchWithAuth(eq(REMOTE_URL + "/" + path), eq("nesteduser"), eq("nestedpass")))
+        when(remoteHttpClient.fetchWithAuth(
+                        eq(REMOTE_URL + "/" + path), eq("nesteduser"), eq("nestedpass"), any()))
                 .thenReturn(remoteResponse);
 
         when(blobStoreManager.get("default")).thenReturn(blobStore);
@@ -500,7 +502,7 @@ class ProxyFetchServiceTest {
 
         assertTrue(result.isPresent());
         assertInstanceOf(ContentResponse.class, result.get());
-        verify(remoteHttpClient).fetchWithAuth(anyString(), eq("nesteduser"), eq("nestedpass"));
+        verify(remoteHttpClient).fetchWithAuth(anyString(), eq("nesteduser"), eq("nestedpass"), any());
     }
 
     private RepositoryConfig createProxyRepo() {

@@ -2,13 +2,8 @@ package de.bsnsoft.megarepo.it;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
-import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
-import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
-import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -23,7 +18,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,40 +37,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NugetRepositoryIntegrationTest extends BaseIntegrationTest {
 
     private static final String REPO_NAME = "nuget-integration-test";
-    private static final String BLOB_STORE_NAME = "default";
-
-    @Autowired
-    private RepositoryJpaRepository repositoryJpaRepository;
-
-    @Autowired
-    private BlobStoreJpaRepository blobStoreJpaRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Find-or-create the fixture repository, then drop whatever a previous run pushed into
+     * it: NuGet treats a re-push of an existing version as a conflict, so a package left
+     * over from an earlier run would turn the {@code 201 CREATED} assertions into 409s.
+     */
     @BeforeEach
     void setUp() {
-        if (blobStoreJpaRepository.findById(BLOB_STORE_NAME).isEmpty()) {
-            var blobStore = new BlobStoreEntity();
-            blobStore.setName(BLOB_STORE_NAME);
-            blobStore.setType("file");
-            blobStore.setConfig(Map.of("path", "data/blobs/default"));
-            blobStore.setCreatedAt(Instant.now());
-            blobStore.setUpdatedAt(Instant.now());
-            blobStoreJpaRepository.save(blobStore);
-        }
-
-        if (repositoryJpaRepository.findByName(REPO_NAME).isEmpty()) {
-            var repo = new RepositoryEntity();
-            repo.setName(REPO_NAME);
-            repo.setFormat("nuget");
-            repo.setType("HOSTED");
-            repo.setOnline(true);
-            repo.setBlobStoreName(BLOB_STORE_NAME);
-            repo.setAttributes(Map.of());
-            repo.setCreatedAt(Instant.now());
-            repo.setUpdatedAt(Instant.now());
-            repositoryJpaRepository.save(repo);
-        }
+        ensureDefaultBlobStore();
+        purgeRepositoryContent(ensureRepository(REPO_NAME, "nuget", "HOSTED", Map.of()));
     }
 
     @Test
@@ -164,6 +136,50 @@ class NugetRepositoryIntegrationTest extends BaseIntegrationTest {
         ResponseEntity<String> response = restTemplate.getForEntity(
                 repositoryUrl(REPO_NAME, "v3-flatcontainer/does.not.exist/index.json"), String.class);
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    /**
+     * End-to-end check that the legacy NuGet V2 (OData) read endpoints are
+     * reachable through the router + security firewall (the OData path/query
+     * characters {@code $ ( ) ' ,} must not be rejected) and return Atom XML for
+     * a package pushed via the shared push endpoint.
+     */
+    @Test
+    void v2ODataReadEndpoints() throws IOException {
+        push(buildNupkg("V2.Sample", "3.1.0"));
+
+        // $metadata — OData EDMX schema
+        ResponseEntity<String> metadata = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "$metadata"), String.class);
+        assertEquals(HttpStatus.OK, metadata.getStatusCode(), "body: " + metadata.getBody());
+        assertNotNull(metadata.getBody());
+        assertTrue(metadata.getBody().contains("edmx:Edmx"), metadata.getBody());
+
+        // FindPackagesById()?id='V2.Sample' — Atom feed with the version
+        ResponseEntity<String> find = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "FindPackagesById()") + "?id='V2.Sample'", String.class);
+        assertEquals(HttpStatus.OK, find.getStatusCode(), "body: " + find.getBody());
+        assertNotNull(find.getBody());
+        assertTrue(find.getBody().contains("<feed"), find.getBody());
+        assertTrue(find.getBody().contains("<d:Version>3.1.0</d:Version>"), find.getBody());
+        assertTrue(find.getBody().contains("v3-flatcontainer/v2.sample/3.1.0/v2.sample.3.1.0.nupkg"),
+                find.getBody());
+
+        // Packages(Id='V2.Sample',Version='3.1.0') — single Atom entry
+        ResponseEntity<String> entry = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "Packages(Id='V2.Sample',Version='3.1.0')"), String.class);
+        assertEquals(HttpStatus.OK, entry.getStatusCode(), "body: " + entry.getBody());
+        assertNotNull(entry.getBody());
+        assertTrue(entry.getBody().contains("<entry"), entry.getBody());
+        assertTrue(entry.getBody().contains("<d:Id>V2.Sample</d:Id>"), entry.getBody());
+
+        // Search()?searchTerm='v2.sample' — Atom feed
+        ResponseEntity<String> search = restTemplate.getForEntity(
+                repositoryUrl(REPO_NAME, "Search()") + "?searchTerm='v2.sample'", String.class);
+        assertEquals(HttpStatus.OK, search.getStatusCode(), "body: " + search.getBody());
+        assertNotNull(search.getBody());
+        assertTrue(search.getBody().contains("<feed"), search.getBody());
+        assertTrue(search.getBody().contains("V2.Sample"), search.getBody());
     }
 
     private ResponseEntity<String> push(byte[] nupkg) {

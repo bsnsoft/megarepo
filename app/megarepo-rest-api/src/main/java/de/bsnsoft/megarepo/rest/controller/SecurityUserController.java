@@ -100,6 +100,28 @@ public class SecurityUserController {
         return ResponseEntity.ok(toXO(entity));
     }
 
+    /**
+     * Re-verify the caller's password before sensitive account data is shown.
+     *
+     * <p>The web UI calls this before revealing the NuGet API key, mirroring
+     * Sonatype Nexus, which prompts for the password before displaying a user
+     * token. Returns 204 on a correct password and 400 otherwise (the global
+     * exception handler maps the {@link IllegalArgumentException}). Lives under
+     * the authenticated {@code /api/v1/security/users/me} path, never under the
+     * {@code permitAll} {@code /api/v1/security/auth/**} prefix.
+     */
+    @PostMapping("/me/verify-password")
+    public ResponseEntity<Void> verifyMyPassword(Principal principal, @RequestBody Map<String, String> body) {
+        String password = body.get("password");
+        if (password == null || password.isBlank()) {
+            throw new IllegalArgumentException("Password is required");
+        }
+        if (!userService.verifyPassword(principal.getName(), password)) {
+            throw new IllegalArgumentException("Password is incorrect");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @PutMapping("/me/change-password")
     public ResponseEntity<Void> changeMyPassword(Principal principal, @RequestBody Map<String, String> body) {
         String currentPassword = body.get("currentPassword");
