@@ -18,6 +18,14 @@ import java.util.UUID;
  *     repository can be configured {@link FirewallMode#QUARANTINE} and block
  *     nothing, and a UI that shows only the mode tells the operator they are
  *     protected when they are not.
+ * @param policyId the policy assigned to this repository, or null when it falls
+ *     back to the global default. <b>An assigned policy replaces the default; it
+ *     does not stack on top of it</b> — see
+ *     {@link FirewallRepositoryPolicyUpdateXO}
+ * @param policyName the assigned policy's name, or null. Resolved server-side so
+ *     the overview does not have to join the policy list against every row —
+ *     and so a repository pointing at a policy that was deleted underneath it
+ *     shows as unassigned rather than as a dangling id
  * @param configured false when no {@code firewall_repository_config} row exists
  *     and the mode shown is the instance-wide default
  * @param violations how many violations were recorded for this repository in the
@@ -32,6 +40,8 @@ public record FirewallRepositoryStateXO(
         String type,
         FirewallMode mode,
         FirewallFailMode failMode,
+        UUID policyId,
+        String policyName,
         FirewallEffectiveState effectiveState,
         boolean configured,
         long violations,

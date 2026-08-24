@@ -2,11 +2,13 @@ package de.bsnsoft.megarepo.rest.controller;
 
 import de.bsnsoft.megarepo.database.entity.FirewallEnforcementSettingsEntity;
 import de.bsnsoft.megarepo.database.repository.FirewallEnforcementSettingsJpaRepository;
+import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.security.SecurityConfig;
 import de.bsnsoft.megarepo.security.auth.AnonymousAccessFilter;
 import de.bsnsoft.megarepo.security.auth.JwtAuthenticationFilter;
@@ -135,14 +137,28 @@ class FirewallAdminAuthorizationTest {
                 FirewallEnforcementSettingsJpaRepository enforcementRepo,
                 FirewallRepositoryConfigJpaRepository configRepo,
                 FirewallViolationJpaRepository violationRepo,
-                RepositoryJpaRepository repositoryRepo) {
+                RepositoryJpaRepository repositoryRepo,
+                FirewallPolicyJpaRepository policyRepo,
+                QuarantineService quarantine) {
             return new FirewallAdminController(
                     enforcementSettings,
                     enforcementRepo,
                     configRepo,
                     violationRepo,
                     repositoryRepo,
+                    policyRepo,
+                    quarantine,
                     FirewallAuditProperties.defaults());
+        }
+
+        @Bean
+        FirewallPolicyJpaRepository firewallPolicyRepository() {
+            return mock(FirewallPolicyJpaRepository.class);
+        }
+
+        @Bean
+        QuarantineService quarantineService() {
+            return mock(QuarantineService.class);
         }
 
         @Bean

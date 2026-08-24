@@ -75,6 +75,23 @@ public class SecurityConfig {
      */
     public static final String FIREWALL_EXEMPTION_REQUEST_PATH = "/api/v1/firewall/exemptions";
 
+    /**
+     * The policy editor's rule catalogue, restricted to {@code nx-admin}.
+     *
+     * <p>A separate constant because the endpoint sits outside
+     * {@link #FIREWALL_ADMIN_PATH_PATTERN}: the path is part of the Phase 2 API
+     * contract the Web UI is written against, and moving it under
+     * {@code /api/v1/admin/} to inherit that rule would break the client. Stating
+     * the rule here instead keeps authorization where this project keeps it —
+     * without a matcher of its own the path would fall through to the plain
+     * {@code /api/v1/**} rule and be readable by any logged-in user.
+     *
+     * <p>It carries no component data, but it is the supporting call of an
+     * administrators-only editor and enumerates which controls this build
+     * actually enforces, which is not a list to hand out.
+     */
+    public static final String FIREWALL_RULE_TYPES_PATH = "/api/v1/firewall/rule-types";
+
     @Bean
     public SecurityFilterChain filterChain(
             HttpSecurity http,
@@ -132,6 +149,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, FIREWALL_EXEMPTION_REQUEST_PATH)
                         .authenticated()
                         .requestMatchers(FIREWALL_EXEMPTION_PATH_PATTERN)
+                        .hasRole(FIREWALL_ADMIN_ROLE)
+                        .requestMatchers(FIREWALL_RULE_TYPES_PATH)
                         .hasRole(FIREWALL_ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()

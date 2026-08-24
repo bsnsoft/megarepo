@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.dto.firewall;
 
+import de.bsnsoft.megarepo.core.firewall.FirewallAction;
 import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 
 import java.util.List;
@@ -27,6 +28,17 @@ import java.util.List;
  *     switching on {@code MIN_AGE} in an installation where
  *     {@code megarepo.firewall.facts.enabled} is off produces an endlessly
  *     indeterminate rule, and the editor is where to catch that
+ * @param recommendedAction the action this rule should be given unless an
+ *     operator has a reason to do otherwise. {@code WARN} for the two
+ *     heuristics: a heuristic set to BLOCK on day one is a heuristic that gets
+ *     the whole firewall switched off. Advisory to the editor, never applied by
+ *     the server — a policy sets whatever action it says
+ * @param warning one sentence about how this rule behaves in practice, or null
+ *     when there is nothing to warn about. Distinct from {@link #description()}
+ *     so the editor can render it as a caution rather than as prose:
+ *     {@code UNKNOWN_COMPONENT} matches nearly every component a proxy has ever
+ *     served, which is not obvious from its name and is why no default policy
+ *     seeds it
  * @param configSchema the parameters this rule reads, so the editor can render
  *     fields instead of a JSON textarea
  */
@@ -38,6 +50,8 @@ public record FirewallRuleTypeXO(
         boolean heuristic,
         boolean quarantines,
         boolean requiresComponentFacts,
+        FirewallAction recommendedAction,
+        String warning,
         List<ConfigField> configSchema) {
 
     /**
