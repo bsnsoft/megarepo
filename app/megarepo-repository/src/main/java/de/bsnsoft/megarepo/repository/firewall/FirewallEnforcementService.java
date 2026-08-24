@@ -3,22 +3,14 @@ package de.bsnsoft.megarepo.repository.firewall;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
-import de.bsnsoft.megarepo.repository.firewall.facts.ComponentFacts;
-import de.bsnsoft.megarepo.repository.firewall.facts.ComponentFactsService;
-import de.bsnsoft.megarepo.repository.firewall.identity.ComponentIdentity;
-import de.bsnsoft.megarepo.repository.firewall.quarantine.FirewallQuarantineEntry;
-import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
-import de.bsnsoft.megarepo.repository.firewall.rule.FirewallRuleContext;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -49,22 +41,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * caller falls through to the observation path exactly as before. That is what
  * makes this change invisible to an installation that upgrades into it.
  *
- * <h2>The order the decision is assembled in</h2>
+ * <h2>What this class still owns, and what it no longer does</h2>
  *
- * <ol>
- *   <li><b>An existing quarantine entry short-circuits everything.</b> One
- *       indexed read answers a repeated request for a held component: still held
- *       or blocked ⇒ refuse and count the hit; released ⇒ serve, <em>without</em>
- *       running the rules again. Re-deriving the verdict would let an unchanged
- *       policy overturn an operator who deliberately released something, and it
- *       would make every download of a held artifact pay for a full evaluation.</li>
- *   <li>Otherwise the component is identified, its advisories and its local facts
- *       are read once, and {@link FirewallPolicyEvaluator} runs every configured
- *       rule against them — exemptions included.</li>
- *   <li>A decision to hold is written to the queue here, because this is the side
- *       that has the request context and the off-thread executor. The evaluator
- *       stays read-only.</li>
- * </ol>
+ * It owns the two switches, the pre-existing watermark, the asset lookup, the
+ * timeout and the off-thread violation write. It does <em>not</em> assemble the
+ * verdict: identifying, short-circuiting on the queue, reading the facts, running
+ * the rules, weighing the exemptions and writing a hold all happen in
+ * {@link FirewallDecisionAssembly}, which the publish gate runs too.
+ *
+ * <p>That split is not tidiness. While the two directions each assembled their own
+ * decision, the download path consulted the exemptions and the publish path did
+ * not, so an approved exemption served a component and refused the very same
+ * component on publish into the very same repository (osTicket #155155). One
+ * assembly is what makes that class of divergence unrepresentable rather than
+ * merely fixed.
  *
  * <h2>What it costs a download that is enforced</h2>
  *
@@ -107,11 +97,9 @@ public class FirewallEnforcementService {
     private static final long UNAVAILABLE_LOG_INTERVAL = 100;
 
     private final FirewallEvaluationService evaluation;
-    private final FirewallPolicyEvaluator policy;
+    private final FirewallDecisionAssembly assembly;
     private final FirewallEnforcementSettingsService settings;
     private final FirewallViolationRecorder recorder;
-    private final QuarantineService quarantine;
-    private final ObjectProvider<ComponentFactsService> facts;
     private final FirewallEnforcementProperties properties;
     private final ExecutorService executor;
     private final boolean ownsExecutor;
@@ -120,13 +108,11 @@ public class FirewallEnforcementService {
     @Autowired
     public FirewallEnforcementService(
             FirewallEvaluationService evaluation,
-            FirewallPolicyEvaluator policy,
+            FirewallDecisionAssembly assembly,
             FirewallEnforcementSettingsService settings,
             FirewallViolationRecorder recorder,
-            QuarantineService quarantine,
-            ObjectProvider<ComponentFactsService> facts,
             FirewallEnforcementProperties properties) {
-        this(evaluation, policy, settings, recorder, quarantine, facts, properties,
+        this(evaluation, assembly, settings, recorder, properties,
                 defaultExecutor(properties), true);
     }
 
@@ -137,20 +123,16 @@ public class FirewallEnforcementService {
      */
     FirewallEnforcementService(
             FirewallEvaluationService evaluation,
-            FirewallPolicyEvaluator policy,
+            FirewallDecisionAssembly assembly,
             FirewallEnforcementSettingsService settings,
             FirewallViolationRecorder recorder,
-            QuarantineService quarantine,
-            ObjectProvider<ComponentFactsService> facts,
             FirewallEnforcementProperties properties,
             ExecutorService executor,
             boolean ownsExecutor) {
         this.evaluation = evaluation;
-        this.policy = policy;
+        this.assembly = assembly;
         this.settings = settings;
         this.recorder = recorder;
-        this.quarantine = quarantine;
-        this.facts = facts;
         this.properties = properties;
         this.executor = executor;
         this.ownsExecutor = ownsExecutor;
@@ -270,7 +252,16 @@ public class FirewallEnforcementService {
         }
     }
 
-    /** Identify, short-circuit on the queue, apply the policy. Runs off the request thread. */
+    /**
+     * Inspect, then hand the verdict to the shared assembly. Runs off the request
+     * thread.
+     *
+     * <p>Everything after the inspection — the quarantine short-circuit, the
+     * facts, the policy, the exemptions, the fail mode, the grandfathering rule
+     * and the queue entry — is {@link FirewallDecisionAssembly}, which is the same
+     * code the publish gate runs. This method's remaining job is what is genuinely
+     * download-shaped: reading the stored asset, and passing {@code upload=false}.
+     */
     private FirewallEvaluation decide(
             UUID repositoryId,
             String repositoryName,
@@ -282,133 +273,7 @@ public class FirewallEnforcementService {
 
         FirewallEvaluation inspection =
                 evaluation.inspect(repositoryId, repositoryName, path, repositorySettings, watermark);
-
-        ComponentIdentity identity = inspection.identity();
-        if (identity == null) {
-            // No asset row, or an asset attached to no component: checksums,
-            // metadata, index pages. There is no component for a policy to have
-            // an opinion about — not even UNKNOWN_COMPONENT, whose subject is a
-            // component whose coordinates could not be resolved, not the absence
-            // of one.
-            return inspection.withDecision(FirewallDecision.allowed());
-        }
-
-        Optional<FirewallDecision> shortCircuit = decidedEarlier(inspection);
-        if (shortCircuit.isPresent()) {
-            return inspection.withDecision(shortCircuit.get());
-        }
-
-        FirewallRuleContext ruleContext = new FirewallRuleContext(
-                repositoryId,
-                repositoryName,
-                repositoryType,
-                path,
-                identity,
-                inspection.findings(),
-                lookupFacts(identity),
-                repositorySettings,
-                false,
-                inspection.preExisting(),
-                Instant.now());
-
-        FirewallDecision decision = policy.evaluate(ruleContext);
-        if (decision.held()) {
-            decision = hold(inspection.withDecision(decision), decision, context);
-        }
-        return inspection.withDecision(decision);
-    }
-
-    /**
-     * The quarantine short-circuit.
-     *
-     * <p>Returns a decision when there is a live entry for this component, and
-     * empty when there is not — which includes a quarantine store that could not
-     * be read, because {@link QuarantineService#find} answers empty rather than
-     * throwing and a database hiccup must not do what no policy asked for.
-     *
-     * <p>A {@code RELEASED} entry is served <em>without</em> the rules running.
-     * That is deliberate: the release is somebody's decision or the sweep's, and
-     * re-deriving it on every download would either overturn it or make it
-     * meaningless. A {@code BLOCKED} entry is refused for the same reason in the
-     * other direction.
-     */
-    private Optional<FirewallDecision> decidedEarlier(FirewallEvaluation inspection) {
-        Optional<FirewallQuarantineEntry> existing =
-                quarantine.find(inspection.repositoryId(), inspection.componentKey());
-        if (existing.isEmpty()) {
-            return Optional.empty();
-        }
-        FirewallQuarantineEntry entry = existing.get();
-        FirewallDecision.Hold hold = new FirewallDecision.Hold(
-                entry.id(), entry.state(), entry.reason(), entry.nextEvaluationAt(), entry.hitCount());
-
-        if (!entry.denies()) {
-            log.debug("Quarantine entry {} for {} is {} — serving on that decision",
-                    entry.id(), entry.componentKey(), entry.state());
-            return Optional.of(FirewallDecision.releasedFromQuarantine(hold));
-        }
-        quarantine.recordHit(entry.id(), Instant.now());
-        return Optional.of(FirewallDecision.quarantined(
-                entry.policyId(), null, List.of(), hold));
-    }
-
-    /**
-     * Writes the queue entry behind a decision to hold, and folds the stored entry
-     * back into the decision so the 403 can say when it will be looked at again.
-     *
-     * <p>An empty answer from {@link QuarantineService#quarantine} does not soften
-     * the verdict. It means "no entry was written" — quarantine is switched off,
-     * or the component could not be keyed — and the refusal is the policy's, not
-     * the queue's. An enforcing repository with quarantine disabled therefore
-     * still refuses; it simply has no queue in between, which is exactly what
-     * disabling it is for.
-     */
-    private FirewallDecision hold(
-            FirewallEvaluation evaluated, FirewallDecision decision, FirewallRequestContext context) {
-
-        FirewallQuarantineReason reason = decision.hold() == null
-                ? FirewallQuarantineReason.EVALUATION_INCOMPLETE
-                : decision.hold().reason();
-        try {
-            return quarantine.quarantine(evaluated, reason, context)
-                    .map(entry -> decision.withHold(new FirewallDecision.Hold(
-                            entry.id(), entry.state(), entry.reason(),
-                            entry.nextEvaluationAt(), entry.hitCount())))
-                    .orElse(decision);
-        } catch (RuntimeException e) {
-            log.warn("Could not record the quarantine entry for {}/{} — the download was still refused",
-                    evaluated.repositoryName(), evaluated.path(), e);
-            return decision;
-        }
-    }
-
-    /**
-     * The component's locally cached facts.
-     *
-     * <p>One primary-key read against {@code firewall_component_facts}, which
-     * never fetches: a miss answers {@code UNKNOWN} and the rules that need the
-     * fact report {@code INDETERMINATE}. That is the whole reason the table
-     * exists — reading package metadata on a request thread is what the customer
-     * forbade.
-     *
-     * <p>Resolution is <em>not</em> requested from here. The rules that need a
-     * fact enqueue it themselves when they find it missing, which keeps the
-     * request that pays for the enqueue the same one that noticed the gap, and
-     * avoids queueing a lookup for every download in an instance whose policy
-     * asks for no facts at all.
-     */
-    private ComponentFacts lookupFacts(ComponentIdentity identity) {
-        ComponentFactsService service = facts.getIfAvailable();
-        if (service == null) {
-            return ComponentFacts.unknown(identity.key());
-        }
-        try {
-            ComponentFacts looked = service.lookup(identity);
-            return looked == null ? ComponentFacts.unknown(identity.key()) : looked;
-        } catch (RuntimeException e) {
-            log.debug("Component facts lookup failed for {}", identity.key(), e);
-            return ComponentFacts.unknown(identity.key());
-        }
+        return assembly.decide(inspection, repositoryType, false, context);
     }
 
     /**
@@ -472,31 +337,12 @@ public class FirewallEnforcementService {
      * would put rows into the component-keyed log that name no component. It is
      * logged instead, in {@link #unavailable}.
      *
-     * <p>Neither does a decision taken by the quarantine short-circuit: the queue
-     * entry <em>is</em> the record of it, it already counts the hits, and writing
-     * a violation row per download of a held component would flood the log with
-     * the one thing that is already visible elsewhere. Note that "has no
-     * findings" does not express this — an advisory naming the component is
-     * exactly the case where a held artifact is downloaded again and again — so
-     * the short-circuit is tested for directly.
+     * <p>Neither does a decision taken by the quarantine short-circuit —
+     * {@link FirewallDecision#fromQuarantineQueue()}, which the publish gate
+     * applies for the same reason.
      */
-    /**
-     * Whether the verdict came from an existing queue entry rather than from a
-     * policy run.
-     *
-     * <p>Recognised by the absence of violations next to a stored hold: every
-     * decision the engine reaches itself names at least one rule — the one that
-     * matched, or the one that could not decide — while
-     * {@link #decidedEarlier} answers from the entry alone and has no rules to
-     * name.
-     */
-    private static boolean takenFromTheQueue(FirewallDecision decision) {
-        FirewallDecision.Hold hold = decision.hold();
-        return hold != null && hold.quarantineId() != null && decision.violations().isEmpty();
-    }
-
     private void recordQuietly(FirewallEvaluation decided, FirewallRequestContext context) {
-        if (takenFromTheQueue(decided.decision())) {
+        if (decided.decision().fromQuarantineQueue()) {
             return;
         }
         if (!decided.hasFindings() && decided.decision().violations().isEmpty()) {

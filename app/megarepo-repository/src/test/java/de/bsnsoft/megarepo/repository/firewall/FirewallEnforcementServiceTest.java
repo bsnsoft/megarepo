@@ -515,7 +515,12 @@ class FirewallEnforcementServiceTest {
 
     private FirewallEnforcementService service(ExecutorService executor) {
         return new FirewallEnforcementService(
-                evaluation, policy, settings, recorder, quarantine, provider(facts),
+                evaluation,
+                // The real assembly over the mocked collaborators: it is the piece
+                // the publish gate shares, so a test of the download path that
+                // stubbed it out would stop covering the half that both use.
+                new FirewallDecisionAssembly(policy, quarantine, provider(facts)),
+                settings, recorder,
                 new FirewallEnforcementProperties(
                         true, Duration.ofMillis(50), Duration.ofSeconds(10), 4, 200),
                 executor,

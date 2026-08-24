@@ -159,11 +159,16 @@ public class FirewallUploadGate {
      * already paying for a blob write, and a refused upload whose reason never
      * reached the log is the one case where the record matters most.
      *
+     * <p>A verdict taken from an existing quarantine entry writes nothing, exactly
+     * as on the download side — see
+     * {@link FirewallDecision#fromQuarantineQueue()}. The entry is the record, and
+     * it counts its own hits.
+     *
      * <p>A failure changes nothing: the verdict has been reached, and a log write
      * must not be able to turn a refusal into an acceptance.
      */
     private void record(FirewallEvaluation verdict, FirewallRequestContext context) {
-        if (!verdict.enforcementEvaluated()) {
+        if (!verdict.enforcementEvaluated() || verdict.decision().fromQuarantineQueue()) {
             return;
         }
         try {
