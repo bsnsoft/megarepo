@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Features
+- **Repository firewall, phase 1: identity, sources and audit mode** — components
+  are identified by package URL (purl) instead of a CPE product name guessed from
+  the artifact name, with a version scheme per ecosystem (Maven, npm, PyPI, NuGet,
+  Docker, raw) so "1.0.0-beta" and "1.0.0" are ordered the way the ecosystem
+  orders them. Advisories come from NVD, OSV and GHSA. A new **AUDIT mode**
+  records what enforcement *would* do without blocking anything, and a comparison
+  report shows CPE-based against purl-based matching on the existing data, so an
+  operator can see the difference before switching. All enforcement sits behind a
+  global master switch that is off by default. (osTicket #155155)
+- **Repository firewall, phase 2: quarantine, rules, exemptions and upload
+  enforcement** — a blocked component now enters a quarantine state machine and is
+  released automatically once it stops matching (rather than staying blocked until
+  someone notices). Five rule types were added on top of the vulnerability check:
+  minimum age, unknown component, license, typosquatting and namespace confusion.
+  Exemptions carry a scope and an expiry and have a request flow, so an override
+  is a dated decision instead of a permanent hole. Uploads are evaluated, not just
+  downloads, and the firewall has its own UI. (osTicket #155155)
 - **Repository copy button copies the full URL** — the copy action on the
   repositories list now puts the absolute URL (scheme + host +
   `/repository/<name>`) on the clipboard instead of just the path. (osTicket
@@ -42,7 +59,69 @@
   value). New table `outbound_proxy_settings` (migration `V10`). (osTicket
   #117649)
 
+### Security
+Three authorization gaps of the same class, all present since the first public
+release (the NVD firewall API since 0.10.0-beta). They share one cause: MegaRepo
+expresses authorization only as filter-chain matchers, and the chain ends with
+`/api/v1/**` merely `authenticated()` — so a controller without its own matcher
+was silently open to **every** signed-in account, including the read-only
+`nx-viewer` role that is also the LDAP default when no group mapping applies.
+Operators who ran an affected version should assume any account could reach these
+endpoints and rotate accordingly.
+
+- **Privilege escalation through user administration** — `POST` and
+  `PUT /api/v1/security/users` accepted a free-form `roles` list from any
+  signed-in account, so a read-only user could grant themselves `nx-admin` and
+  defeat every other role check in the product. Role administration, anonymous
+  access, LDAP, SSL and system settings were writable the same way, and
+  `PUT /api/v1/security/users/{id}/change-password` was open to every account.
+  User, role and system administration now require `nx-admin`, and `UserService`
+  refuses a role change from a non-administrator as a second line of defence.
+  (osTicket #155155)
+- **NVD firewall administration was open to every signed-in account** —
+  `/api/v1/security/nvd-firewall` returned the configured NVD API key in
+  cleartext, let the firewall be switched off with a `PUT`, and let the whitelist
+  be written. Now `nx-admin`. Rotate the API key if an affected version was
+  reachable by non-administrators. (osTicket #155155)
+- **Operational administration and artifact deletion required no privilege** —
+  running a scheduled task (which includes cleanup, and therefore deletes
+  artifacts), reading blob stores (whose `GET` returned the S3
+  `secretAccessKey`), editing cleanup policies and routing rules, invalidating
+  caches, editing the blacklist, reading audit and activity logs, and `DELETE` on
+  repositories, components and assets are all `nx-admin` now. Creating and
+  updating repositories, uploading, searching, metrics and the remaining read
+  endpoints were deliberately left as they were, because documented provisioning
+  scripts and CI identities use them without administrator rights. (osTicket
+  #155155)
+
 ### Fixed
+- **Scheduled tasks seeded at installation never ran** — the seeded tasks
+  (including the NVD firewall sync and the cleanup tasks) were written without a
+  `next_run`, and the scheduler only considers tasks that have one. They were
+  therefore skipped forever on every installation, and only a manual run did
+  anything. `next_run` is now derived from the cron expression during a scheduler
+  pass. A missing `next_run` deliberately does **not** mean "due immediately" —
+  manual-only tasks would then fire every minute. (osTicket #155155)
+- **Group repositories bypassed the firewall completely** — a download resolved
+  through a group repository ran neither enforcement nor audit, so any group was a
+  way around the firewall. The resolving member now governs mode, policy and
+  attribution, and a block is final: the group does not fall through to the next
+  member that happens to hold a clean copy. A 403 names both the group and the
+  member. Setting a firewall mode on the group itself is now rejected with a 400
+  instead of being silently ignored. (osTicket #155155)
+- **Uploads and downloads reached different firewall verdicts** — the two paths
+  had grown apart in 17 ways, among them ignored exemptions, a release button for
+  components classified as malicious, rejection of components that had been
+  cleared, and grandfathering without an audit trail. Both directions now decide
+  through the same assembly, which makes the divergence unrepresentable rather
+  than merely fixed. (osTicket #155155)
+- **Visual Studio could not browse NuGet proxy repositories** — the upstream
+  service index was matched with an exact `@type` comparison, but the NuGet V3
+  spec allows versioned spellings (`SearchQueryService/3.5.0`), and feeds may
+  publish only those. The search resource then stayed unresolved and
+  `/v3/search` answered 502. Resources are now grouped by base type with a
+  documented, document-order-independent preference (named variant first,
+  otherwise highest version). (osTicket #155155)
 - **npm proxy: cached packages now appear in Browse** — an npm proxy repository
   passed the upstream packument through unchanged, so every `dist.tarball` still
   pointed at the upstream registry. npm and pnpm therefore downloaded packages
