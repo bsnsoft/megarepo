@@ -337,13 +337,26 @@ class FirewallEnforcementDatabaseTest {
     @Test
     @DisplayName("turning it off and on again does not grandfather what was pulled in meanwhile")
     void thewatermarkIsNotResetByToggling() {
-        Instant first = givenEnforcementEnabled();
+        givenEnforcementEnabled();
+        // Read the watermark back instead of keeping the one the save returned.
+        // Both are the same instant, but not the same value: the column keeps
+        // microseconds, while the Instant the service stamped keeps whatever
+        // resolution the platform clock has — microseconds on macOS, nanoseconds
+        // on Linux. Comparing the in-memory value with its stored form therefore
+        // passes on one operating system and fails on the other, which is how
+        // this test stayed green locally and turned CI red.
+        Instant first = storedWatermark();
+
         enforcementSettings.save(false, "admin");
         enforcementSettings.save(true, "admin");
 
-        assertThat(enforcementRows.findById(1).orElseThrow().getEnforcingSince())
+        assertThat(storedWatermark())
                 .as("a brief disable must not silently weaken the firewall")
                 .isEqualTo(first);
+    }
+
+    private Instant storedWatermark() {
+        return enforcementRows.findById(1).orElseThrow().getEnforcingSince();
     }
 
     /** Enables enforcement and returns the watermark it stamped. */
