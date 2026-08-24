@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -492,11 +493,59 @@ class RepositoryRouterTest {
         when(request.getRequestURI()).thenReturn("/repository/group-repo/some/path");
         when(repositoryConfigService.getRepository("group-repo")).thenReturn(Optional.of(repo));
         when(groupHandler.handleGet(eq(repo), eq("some/path"), eq(request)))
-                .thenReturn(notFound);
+                .thenReturn(new GroupHandler.GroupResponse(notFound, null));
 
         router.handleGet("group-repo", request, response);
 
         verify(groupHandler).handleGet(repo, "some/path", request);
+    }
+
+    /**
+     * The bug this branch fixes: a download served through a group used to be
+     * checked against the <em>group's</em> id, which owns no assets and no
+     * firewall configuration, so the firewall found nothing and served
+     * everything (osTicket #155155).
+     *
+     * <p>Asserted at the router rather than only end-to-end because this is the
+     * seam: the group resolves to a member, and the two firewall hooks have to
+     * follow that indirection. A regression here is invisible in every
+     * format-level test.
+     */
+    @Test
+    void handleGet_groupRepo_firewallJudgesTheResolvingMember() throws IOException {
+        var group = new RepositoryConfig(
+                UUID.randomUUID(), "group-repo", "maven2", RepositoryType.GROUP, true, "default", Map.of());
+        var member = new RepositoryConfig(
+                UUID.randomUUID(), "maven-central", "maven2", RepositoryType.PROXY, true, "default", Map.of());
+        byte[] data = "jar".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var content = new FormatResponse.ContentResponse(
+                new java.io.ByteArrayInputStream(data), "application/java-archive", data.length,
+                Map.of(), Map.of());
+
+        when(request.getRequestURI()).thenReturn("/repository/group-repo/some/path");
+        when(request.getMethod()).thenReturn("GET");
+        when(response.getOutputStream()).thenReturn(new TestServletOutputStream(new ByteArrayOutputStream()));
+        when(repositoryConfigService.getRepository("group-repo")).thenReturn(Optional.of(group));
+        when(groupHandler.handleGet(eq(group), eq("some/path"), eq(request)))
+                .thenReturn(new GroupHandler.GroupResponse(content, member));
+
+        router.handleGet("group-repo", request, response);
+
+        // Enforcement asked about the member, never about the group.
+        verify(firewallEnforcementService).evaluate(
+                eq(member.id()), eq("maven-central"), eq("some/path"), any());
+        verify(firewallEnforcementService, never()).evaluate(
+                eq(group.id()), any(), any(), any());
+
+        // And so did the observation path, with the group recorded as the route.
+        var context = ArgumentCaptor.forClass(FirewallRequestContext.class);
+        verify(firewallDownloadObserver).observeDownload(
+                eq(member.id()), eq("maven-central"), eq("some/path"), context.capture());
+        assertEquals("group-repo", context.getValue().viaRepository());
+
+        // The legacy NVD firewall shares the hook and had the same blind spot.
+        verify(nvdFirewallService).checkDownload(
+                eq(member.id()), eq("some/path"), eq("maven-central"), any());
     }
 
     @Test

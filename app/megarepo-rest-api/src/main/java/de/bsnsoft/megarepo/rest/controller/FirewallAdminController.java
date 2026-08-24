@@ -134,6 +134,13 @@ public class FirewallAdminController {
     /** Fixed like {@code AuditController}'s, so a continuation token stays meaningful. */
     private static final int VIOLATION_PAGE_SIZE = 50;
 
+    /**
+     * {@code repositories.type} for a group. Compared as text because that column
+     * is text; {@code RepositoryType} lives in a module this controller does not
+     * depend on for entity reads.
+     */
+    private static final String GROUP_TYPE = "GROUP";
+
     private final FirewallEnforcementSettingsService enforcementSettings;
     private final FirewallEnforcementSettingsJpaRepository enforcementRepo;
     private final FirewallRepositoryConfigJpaRepository configRepo;
@@ -260,6 +267,9 @@ public class FirewallAdminController {
      * {@code policyId} are left exactly as they are: this endpoint changes one
      * thing, and an upsert that quietly reset a fail mode to its default would be
      * a second, invisible change to how the repository behaves.
+     *
+     * <p>A <b>group</b> repository is refused a mode other than
+     * {@link FirewallMode#OFF} — see {@link #GROUP_TYPE}.
      */
     @PutMapping("/repositories/{repositoryId}")
     public ResponseEntity<FirewallRepositoryStateXO> setRepositoryMode(
@@ -268,6 +278,8 @@ public class FirewallAdminController {
         RepositoryEntity repository = repositoryRepo
                 .findById(repositoryId)
                 .orElseThrow(() -> new NotFoundException("Repository not found: " + repositoryId));
+
+        rejectModeOnGroup(repository, request.mode());
 
         Optional<FirewallRepositoryConfigEntity> existing = configRepo.findById(repositoryId);
         FirewallMode current = existing.map(FirewallRepositoryConfigEntity::getMode).orElse(null);
@@ -306,6 +318,38 @@ public class FirewallAdminController {
     /** The phrase that arms {@code repositoryName}. */
     public static String requiredConfirmation(String repositoryName) {
         return "QUARANTINE " + repositoryName;
+    }
+
+    /**
+     * A group cannot have a firewall mode of its own, and saying so is kinder
+     * than accepting one.
+     *
+     * <p>A group repository stores nothing. The artifact a consumer pulls through
+     * {@code /repository/my-group/…} lives in a member, and so does everything
+     * the firewall reads about it — the asset row, the component, the advisories.
+     * The download path therefore evaluates the <em>member</em> that resolved the
+     * artifact (osTicket #155155), with that member's mode, policy and fail mode.
+     * A mode stored against the group would be read by nothing.
+     *
+     * <p>Silently storing it would be the worst outcome available: {@code /status}
+     * would report the group as {@code BLOCKING}, the Web UI would show a
+     * "Quarantine" badge, and not one download would be refused. An operator who
+     * believes they have armed their organisation's single entry point and has
+     * not is worse off than one who was never allowed to try — which is why this
+     * is a 400 naming the alternative rather than a no-op.
+     */
+    private static void rejectModeOnGroup(RepositoryEntity repository, FirewallMode mode) {
+        if (!GROUP_TYPE.equalsIgnoreCase(repository.getType())) {
+            return;
+        }
+        if (mode == null || mode == FirewallMode.OFF) {
+            return;
+        }
+        throw new ValidationException(
+                "'" + repository.getName() + "' is a group repository: it routes to its members and "
+                        + "holds no components of its own, so a firewall mode set here would never be "
+                        + "applied. Set the mode on the member repositories instead — downloads through "
+                        + "this group are already evaluated against whichever member resolves them.");
     }
 
     // ── Recorded findings ───────────────────────────────────────────────
@@ -358,6 +402,11 @@ public class FirewallAdminController {
             Map<UUID, Long> violationCounts) {
 
         FirewallMode mode = config != null ? config.getMode() : auditProperties.defaultMode();
+        // A group's own mode governs nothing (see rejectModeOnGroup), so its
+        // state is resolved as if it were OFF. Writing a non-OFF mode on a group
+        // is refused now, but an installation that stored one before this rule
+        // existed must not keep being told it is BLOCKING when it is not.
+        FirewallMode governing = GROUP_TYPE.equalsIgnoreCase(repository.getType()) ? FirewallMode.OFF : mode;
         return new FirewallRepositoryStateXO(
                 repository.getId(),
                 repository.getName(),
@@ -365,7 +414,7 @@ public class FirewallAdminController {
                 repository.getType(),
                 mode,
                 config != null ? config.getFailMode() : null,
-                FirewallEffectiveState.resolve(enforcementEnabled, mode),
+                FirewallEffectiveState.resolve(enforcementEnabled, governing),
                 config != null,
                 violationCounts.getOrDefault(repository.getId(), 0L),
                 config != null ? config.getUpdatedAt() : null);

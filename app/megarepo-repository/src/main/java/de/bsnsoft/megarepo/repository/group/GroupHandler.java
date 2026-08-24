@@ -40,29 +40,59 @@ public class GroupHandler {
     private static final String[] CHECKSUM_EXTENSIONS = {".md5", ".sha1", ".sha256", ".sha512"};
 
     /**
+     * A group's answer to a GET, together with the member repository that
+     * produced it.
+     *
+     * <p>The second half is what makes the repository firewall work through a
+     * group (osTicket #155155). A group owns no assets and no components: the
+     * artifact behind {@code /repository/my-group/…} physically lives in one of
+     * the members, and so do its {@code assets} row, its component, and the
+     * {@code firewall_repository_config} that says whether it may be handed out.
+     * A caller that only receives the {@link FormatResponse} cannot look any of
+     * that up, which is precisely how group downloads bypassed enforcement:
+     * {@code RepositoryRouter} evaluated the <em>group's</em> id, found no asset
+     * and no configuration, and served.
+     *
+     * @param response what to send to the client
+     * @param servedBy the member that resolved the artifact, or {@code null} when
+     *     no single member did — a 404, or merged metadata, which is assembled
+     *     from every member at once and belongs to none of them. Metadata carries
+     *     no component, so the firewall has nothing to say about it either way.
+     */
+    public record GroupResponse(FormatResponse response, RepositoryConfig servedBy) {
+
+        /** An answer that belongs to the group itself rather than to one member. */
+        static GroupResponse ofGroup(FormatResponse response) {
+            return new GroupResponse(response, null);
+        }
+    }
+
+    /**
      * Handles GET requests for group repositories.
      * <p>
      * For artifact paths: iterates members in order, returns first non-404 response.
      * For metadata paths: fetches from all members and merges the results.
      * For checksum files of metadata: computes checksum from the merged metadata content.
      */
-    public FormatResponse handleGet(RepositoryConfig groupRepo, String path, HttpServletRequest request) {
+    public GroupResponse handleGet(RepositoryConfig groupRepo, String path, HttpServletRequest request) {
         List<RepositoryConfig> members = groupMemberResolver.resolveMembers(groupRepo);
         if (members.isEmpty()) {
-            return new NotFoundResponse("Group '%s' has no online members".formatted(groupRepo.name()));
+            return GroupResponse.ofGroup(
+                    new NotFoundResponse("Group '%s' has no online members".formatted(groupRepo.name())));
         }
 
         FormatPlugin plugin = formatRegistry.getPlugin(groupRepo.format());
         FormatRequestHandler handler = plugin.getRequestHandler();
 
         if (handler.isMetadataPath(path)) {
-            return handleMetadataGet(groupRepo, path, request, members, handler);
+            return GroupResponse.ofGroup(handleMetadataGet(groupRepo, path, request, members, handler));
         }
 
         // Check if this is a checksum request for a metadata file (e.g. maven-metadata.xml.sha1)
         String metadataChecksumExt = getMetadataChecksumExtension(path, handler);
         if (metadataChecksumExt != null) {
-            return handleMetadataChecksumGet(groupRepo, path, metadataChecksumExt, request, members, handler);
+            return GroupResponse.ofGroup(handleMetadataChecksumGet(
+                    groupRepo, path, metadataChecksumExt, request, members, handler));
         }
 
         return handleArtifactGet(groupRepo, path, request, members, handler);
@@ -83,7 +113,18 @@ public class GroupHandler {
         return handler.handleHostedPut(member, path, request);
     }
 
-    private FormatResponse handleArtifactGet(
+    /**
+     * First member that has the artifact wins — and it wins <em>outright</em>.
+     *
+     * <p>The loop stops at the first non-404, and the firewall verdict is taken
+     * on that member afterwards. So a member whose policy denies the artifact
+     * denies the download; the search does not carry on to a member that would
+     * have served it. Anything else would make the group a bypass: an operator
+     * could quarantine a proxy and still get the same component through the group
+     * that contains it, which is the one outcome this whole feature exists to
+     * prevent.
+     */
+    private GroupResponse handleArtifactGet(
             RepositoryConfig groupRepo,
             String path,
             HttpServletRequest request,
@@ -97,10 +138,11 @@ public class GroupHandler {
                         groupRepo.name(),
                         path,
                         member.name());
-                return memberResponse;
+                return new GroupResponse(memberResponse, member);
             }
         }
-        return new NotFoundResponse("Artifact '%s' not found in any member of group '%s'".formatted(path, groupRepo.name()));
+        return GroupResponse.ofGroup(new NotFoundResponse(
+                "Artifact '%s' not found in any member of group '%s'".formatted(path, groupRepo.name())));
     }
 
     private FormatResponse handleMetadataGet(

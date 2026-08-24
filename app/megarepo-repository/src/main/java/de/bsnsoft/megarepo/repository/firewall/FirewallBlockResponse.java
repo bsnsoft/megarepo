@@ -82,20 +82,38 @@ public final class FirewallBlockResponse {
      * that has to survive being the only thing a client shows.
      */
     public static String summary(FirewallEvaluation evaluation) {
+        return summary(evaluation, null);
+    }
+
+    /**
+     * The same sentence, naming the group the client addressed as well as the
+     * member the verdict is about.
+     *
+     * <p>Both, not one. The repository in the developer's {@code settings.xml} is
+     * the group, so a message naming only {@code maven-central-proxy} sends them
+     * looking for a repository they have never configured; a message naming only
+     * the group sends the operator to a repository whose firewall settings are
+     * irrelevant to the decision. The two names are also the shortest possible
+     * statement of the rule itself: <em>the member decides, the group only
+     * routes.</em>
+     *
+     * @param viaRepository the group's name, or null for a direct download
+     */
+    public static String summary(FirewallEvaluation evaluation, String viaRepository) {
         FirewallDecision decision = evaluation.decision();
         String component = component(evaluation);
+        String from = from(evaluation, viaRepository);
 
         if (decision.reason() == FirewallDecision.Reason.EVALUATION_UNAVAILABLE) {
-            return "MegaRepo firewall blocked %s from '%s': the component could not be checked in time "
-                    .formatted(component, orUnknown(evaluation.repositoryName()))
+            return "MegaRepo firewall blocked %s from %s: the component could not be checked in time "
+                    .formatted(component, from)
                     + "and this repository is configured to deny downloads it cannot check "
                     + "(fail_mode=FAIL_CLOSED).";
         }
 
         List<FirewallRuleViolation> blocking = decision.blockingViolations();
         if (blocking.isEmpty()) {
-            return "MegaRepo firewall blocked %s from '%s'."
-                    .formatted(component, orUnknown(evaluation.repositoryName()));
+            return "MegaRepo firewall blocked %s from %s.".formatted(component, from);
         }
         FirewallRuleViolation first = blocking.get(0);
         String ids = decision.advisoryIds().isEmpty()
@@ -104,21 +122,34 @@ public final class FirewallBlockResponse {
         String more = blocking.size() > 1
                 ? " (%d further rule(s) also matched.)".formatted(blocking.size() - 1)
                 : "";
-        return "MegaRepo firewall blocked %s from '%s': %s — %s.%s%s".formatted(
+        return "MegaRepo firewall blocked %s from %s: %s — %s.%s%s".formatted(
                 component,
-                orUnknown(evaluation.repositoryName()),
+                from,
                 first.ruleType().name(),
                 first.reason(),
                 ids,
                 more);
     }
 
+    /** Where the artifact came from, as one phrase. */
+    private static String from(FirewallEvaluation evaluation, String viaRepository) {
+        String member = "'" + orUnknown(evaluation.repositoryName()) + "'";
+        return viaRepository == null || viaRepository.isBlank()
+                ? member
+                : "%s (via group '%s')".formatted(member, viaRepository);
+    }
+
     /** Headers to set alongside the 403. Values are ASCII-safe and single-line. */
     public static Map<String, String> headers(FirewallEvaluation evaluation) {
+        return headers(evaluation, null);
+    }
+
+    /** Headers to set alongside the 403. Values are ASCII-safe and single-line. */
+    public static Map<String, String> headers(FirewallEvaluation evaluation, String viaRepository) {
         FirewallDecision decision = evaluation.decision();
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put(HEADER_FIREWALL, "blocked");
-        headers.put(HEADER_REASON, headerSafe(summary(evaluation)));
+        headers.put(HEADER_REASON, headerSafe(summary(evaluation, viaRepository)));
 
         List<FirewallRuleViolation> blocking = decision.blockingViolations();
         if (blocking.isEmpty()) {
@@ -147,14 +178,30 @@ public final class FirewallBlockResponse {
 
     /** The response body in the chosen shape. */
     public static String body(FirewallEvaluation evaluation, boolean json) {
-        return json ? jsonBody(evaluation) : textBody(evaluation);
+        return body(evaluation, json, null);
     }
 
-    private static String textBody(FirewallEvaluation evaluation) {
+    /**
+     * The response body in the chosen shape, naming the group the request was
+     * addressed to when there was one.
+     */
+    public static String body(FirewallEvaluation evaluation, boolean json, String viaRepository) {
+        return json ? jsonBody(evaluation, viaRepository) : textBody(evaluation, viaRepository);
+    }
+
+    private static String textBody(FirewallEvaluation evaluation, String viaRepository) {
         FirewallDecision decision = evaluation.decision();
         StringBuilder out = new StringBuilder();
         out.append("MegaRepo repository firewall: this download was blocked.\n\n");
-        out.append("  Repository : ").append(orUnknown(evaluation.repositoryName())).append('\n');
+        if (viaRepository != null && !viaRepository.isBlank()) {
+            // The group first: it is the name the client asked for, so it is the
+            // one the reader recognises. The member below it explains where the
+            // artifact actually came from and whose policy refused it.
+            out.append("  Requested  : ").append(viaRepository).append(" (group)\n");
+            out.append("  Resolved by: ").append(orUnknown(evaluation.repositoryName())).append('\n');
+        } else {
+            out.append("  Repository : ").append(orUnknown(evaluation.repositoryName())).append('\n');
+        }
         out.append("  Path       : ").append(orUnknown(evaluation.path())).append('\n');
 
         if (evaluation.componentKey() != null) {
@@ -193,15 +240,19 @@ public final class FirewallBlockResponse {
         return out.toString();
     }
 
-    private static String jsonBody(FirewallEvaluation evaluation) {
+    private static String jsonBody(FirewallEvaluation evaluation, String viaRepository) {
         FirewallDecision decision = evaluation.decision();
         StringBuilder json = new StringBuilder();
         json.append('{');
         // npm prints body.error verbatim, so the human sentence lives there.
-        appendField(json, "error", summary(evaluation), true);
+        appendField(json, "error", summary(evaluation, viaRepository), true);
         appendField(json, "code", ERROR_CODE, false);
-        appendField(json, "message", summary(evaluation), false);
+        appendField(json, "message", summary(evaluation, viaRepository), false);
+        // "repository" stays the member that holds the component: it is the one
+        // an operator can act on, and a tool that keys on this field must not
+        // start pointing at a group once a consumer switches to one.
         appendField(json, "repository", evaluation.repositoryName(), false);
+        appendField(json, "viaRepository", viaRepository, false);
         appendField(json, "path", evaluation.path(), false);
         appendField(json, "component", evaluation.componentKey(), false);
         appendField(json, "policy", decision.policyName(), false);

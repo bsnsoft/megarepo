@@ -105,8 +105,23 @@ public class RepositoryRouter {
         }
 
         FormatResponse formatResponse;
+        // The repository the firewall has to judge, which is not always the one
+        // in the URL. See the comment on `resolvedRepo` below.
+        RepositoryConfig resolvedRepo = repo;
+        String viaGroup = null;
         if (repo.type() == RepositoryType.GROUP) {
-            formatResponse = groupHandler.handleGet(repo, path, request);
+            GroupHandler.GroupResponse group = groupHandler.handleGet(repo, path, request);
+            formatResponse = group.response();
+            if (group.servedBy() != null) {
+                // A group is routing, not storage. The artifact, its component,
+                // its advisories and the firewall configuration that governs it
+                // all belong to the member that just resolved it, so that is the
+                // repository the firewall must be asked about — asking the group
+                // finds no asset and no config and therefore always says "serve"
+                // (osTicket #155155).
+                resolvedRepo = group.servedBy();
+                viaGroup = repo.name();
+            }
         } else {
             FormatPlugin plugin = formatRegistry.getPlugin(repo.format());
             FormatRequestHandler handler = plugin.getRequestHandler();
@@ -125,7 +140,11 @@ public class RepositoryRouter {
         boolean firewallAlreadyEvaluated = false;
         if (formatResponse instanceof ContentResponse content) {
             String currentUser = currentUser(request);
-            var nvdResult = nvdFirewallService.checkDownload(repo.id(), path, repoName, currentUser);
+            // resolvedRepo, not repo: through a group the asset row lives in the
+            // member, and looking it up under the group's id finds nothing and
+            // allows everything.
+            var nvdResult = nvdFirewallService.checkDownload(
+                    resolvedRepo.id(), path, resolvedRepo.name(), currentUser);
             if (nvdResult.blocked()) {
                 try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
                 writeNvdBlockResponse(response, nvdResult);
@@ -146,22 +165,27 @@ public class RepositoryRouter {
             // Note the asymmetry — a fault here serves the artifact, because a
             // broken firewall must fail towards availability. Only a *decided*
             // block withholds anything.
+            //
+            // Through a group this judges the member that resolved the artifact,
+            // with that member's mode, policy and fail mode. The group is a
+            // routing table: its own firewall configuration does not enter into
+            // it, and cannot — the component is not in the group.
             FirewallEvaluation verdict;
             try {
                 verdict = firewallEnforcementService.evaluate(
-                        repo.id(), repoName, path,
+                        resolvedRepo.id(), resolvedRepo.name(), path,
                         new FirewallRequestContext(
-                                currentUser, clientIp(request), path, request.getMethod()));
+                                currentUser, clientIp(request), path, request.getMethod(), viaGroup));
             } catch (RuntimeException e) {
                 log.warn("Repository firewall enforcement failed for {}/{} — the download was served",
-                        repoName, path, e);
+                        resolvedRepo.name(), path, e);
                 verdict = null;
             }
             if (verdict != null) {
                 firewallAlreadyEvaluated = verdict.enforcementEvaluated();
                 if (verdict.blocked()) {
                     try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
-                    writeFirewallBlockResponse(request, response, verdict);
+                    writeFirewallBlockResponse(request, response, verdict, viaGroup);
                     return;
                 }
             }
@@ -193,14 +217,20 @@ public class RepositoryRouter {
             //
             // The call is void, non-blocking and exception-free by contract; the
             // catch is the same belt-and-braces as above.
+            //
+            // Attributed to the member that resolved the artifact, for the same
+            // reason enforcement is: a violation row naming a group would name a
+            // repository the component is not in, and the operator who reads it
+            // would have nowhere to go and fix it. Which group the request came
+            // through is kept in the row's request context instead.
             if (!firewallAlreadyEvaluated) {
                 try {
                     firewallDownloadObserver.observeDownload(
-                            repo.id(), repoName, path,
-                            new FirewallRequestContext(user, ip, path, request.getMethod()));
+                            resolvedRepo.id(), resolvedRepo.name(), path,
+                            new FirewallRequestContext(user, ip, path, request.getMethod(), viaGroup));
                 } catch (RuntimeException e) {
                     log.warn("Repository firewall observation failed for {}/{} — the download was served",
-                            repoName, path, e);
+                            resolvedRepo.name(), path, e);
                 }
             }
         }
@@ -546,21 +576,30 @@ public class RepositoryRouter {
      * body are written directly. Shape is chosen from {@code Accept}: JSON for
      * clients that asked for it (npm prints {@code body.error} verbatim), aligned
      * plain text otherwise.
+     *
+     * @param viaGroup the group the client actually asked, when the artifact was
+     *     resolved through one. Named in the response because the developer
+     *     reading it has {@code my-group} in their settings.xml and has never
+     *     heard of the member the verdict is about.
      */
     private void writeFirewallBlockResponse(
-            HttpServletRequest request, HttpServletResponse response, FirewallEvaluation verdict)
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FirewallEvaluation verdict,
+            String viaGroup)
             throws IOException {
         boolean json = FirewallBlockResponse.prefersJson(request.getHeader("Accept"));
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(FirewallBlockResponse.contentType(json));
-        FirewallBlockResponse.headers(verdict).forEach(response::setHeader);
-        String body = FirewallBlockResponse.body(verdict, json);
+        FirewallBlockResponse.headers(verdict, viaGroup).forEach(response::setHeader);
+        String body = FirewallBlockResponse.body(verdict, json, viaGroup);
         // HEAD carries the headers but no body, same as any other response.
         if (!"HEAD".equalsIgnoreCase(request.getMethod())) {
             response.getWriter().write(body);
             response.getWriter().flush();
         }
-        log.info("Repository firewall denied {}: {}", verdict.path(), FirewallBlockResponse.summary(verdict));
+        log.info("Repository firewall denied {}: {}",
+                verdict.path(), FirewallBlockResponse.summary(verdict, viaGroup));
     }
 
     private void writeNvdBlockResponse(
