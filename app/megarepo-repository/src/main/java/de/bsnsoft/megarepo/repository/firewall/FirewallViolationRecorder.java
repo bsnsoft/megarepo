@@ -353,6 +353,11 @@ public class FirewallViolationRecorder {
             context.put("ip", request.clientIp());
             context.put("path", request.path());
             context.put("method", request.method());
+            // Only when there was one. An absent key reads as "asked for
+            // directly"; a null-valued key would read as "we did not look".
+            if (request.viaRepository() != null) {
+                context.put("viaRepository", request.viaRepository());
+            }
         }
 
         context.put("confidence", strongestConfidence(findings));

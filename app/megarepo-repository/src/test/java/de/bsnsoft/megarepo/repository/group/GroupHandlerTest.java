@@ -25,6 +25,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -83,9 +84,13 @@ class GroupHandlerTest {
         when(formatRequestHandler.handleHostedGet(eq(hostedMember1), eq("com/example/lib.jar"), eq(request)))
                 .thenReturn(content);
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
 
-        assertInstanceOf(ContentResponse.class, result);
+        assertInstanceOf(ContentResponse.class, result.response());
+        // The firewall is evaluated against whoever this names, so a group that
+        // reported the wrong member — or none — would judge the wrong repository's
+        // policy, or no policy at all (osTicket #155155).
+        assertEquals(hostedMember1, result.servedBy());
         // Should not have queried member2 because member1 returned a hit
         verify(formatRequestHandler, never()).handleHostedGet(eq(hostedMember2), any(), any());
     }
@@ -107,9 +112,11 @@ class GroupHandlerTest {
         when(formatRequestHandler.handleProxyGet(eq(proxyMember), eq("com/example/lib.jar"), eq(request)))
                 .thenReturn(content);
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
 
-        assertInstanceOf(ContentResponse.class, result);
+        assertInstanceOf(ContentResponse.class, result.response());
+        // The member that actually had it, not the first one tried.
+        assertEquals(proxyMember, result.servedBy());
     }
 
     @Test
@@ -127,9 +134,9 @@ class GroupHandlerTest {
         when(formatRequestHandler.handleHostedGet(eq(hostedMember2), eq("com/example/lib.jar"), eq(request)))
                 .thenReturn(notFound2);
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
 
-        assertInstanceOf(NotFoundResponse.class, result);
+        assertInstanceOf(NotFoundResponse.class, result.response());
     }
 
     @Test
@@ -155,9 +162,13 @@ class GroupHandlerTest {
         when(formatRequestHandler.mergeMetadata(eq(groupRepo), eq("com/example/maven-metadata.xml"), any()))
                 .thenReturn(Optional.of(mergedResponse));
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/maven-metadata.xml", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/maven-metadata.xml", request);
 
-        assertInstanceOf(ContentResponse.class, result);
+        assertInstanceOf(ContentResponse.class, result.response());
+        // Merged metadata belongs to no single member, and naming one would
+        // attribute a firewall verdict to a repository that supplied half the
+        // answer. Metadata carries no component, so there is nothing to judge.
+        assertNull(result.servedBy());
         // Verify both members were queried (metadata fetches from ALL)
         verify(formatRequestHandler).handleHostedGet(eq(hostedMember1), eq("com/example/maven-metadata.xml"), eq(request));
         verify(formatRequestHandler).handleHostedGet(eq(hostedMember2), eq("com/example/maven-metadata.xml"), eq(request));
@@ -183,10 +194,10 @@ class GroupHandlerTest {
         when(formatRequestHandler.mergeMetadata(eq(groupRepo), eq("com/example/maven-metadata.xml"), any()))
                 .thenReturn(Optional.empty());
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/maven-metadata.xml", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/maven-metadata.xml", request);
 
         // Falls back to first non-404 response
-        assertInstanceOf(ContentResponse.class, result);
+        assertInstanceOf(ContentResponse.class, result.response());
     }
 
     @Test
@@ -194,9 +205,9 @@ class GroupHandlerTest {
         when(groupMemberResolver.resolveMembers(groupRepo))
                 .thenReturn(List.of());
 
-        FormatResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
+        GroupHandler.GroupResponse result = groupHandler.handleGet(groupRepo, "com/example/lib.jar", request);
 
-        assertInstanceOf(NotFoundResponse.class, result);
+        assertInstanceOf(NotFoundResponse.class, result.response());
     }
 
     @Test
