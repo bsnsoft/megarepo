@@ -30,6 +30,12 @@ dependencies {
     runtimeOnly(libs.postgresql)
 
     testImplementation(libs.spring.boot.starter.test)
+    // For AppAdminAuthorizationTest, which drives the real SecurityConfig filter
+    // chain against the controllers this module contributes to /api/v1/admin/**
+    // and /api/v1/system/license. Those endpoints cannot be asserted from
+    // megarepo-rest-api — it does not see this module — so the authorization
+    // proof for them has to live here, next to the controllers it covers.
+    testImplementation(libs.spring.security.test)
     // The CPE/purl comparison report is proven here rather than in
     // megarepo-repository, because it needs the per-format PurlMapper beans and
     // those live in the format modules, which depend on megarepo-repository and
