@@ -214,6 +214,147 @@ public class SecurityConfig {
      */
     public static final String LICENSE_PATH = "/api/v1/system/license";
 
+    // ── Operational surfaces ────────────────────────────────────────────
+    //
+    // The third group of endpoints that never named itself in a matcher and
+    // therefore ran on /api/v1/** -> authenticated(). Unlike the two groups
+    // above these do not hand out privileges or redirect the instance's trust;
+    // they operate on the artifacts and on the storage underneath them. The
+    // read-only nx-viewer could start a cleanup task, drop a blob store, or
+    // delete a repository outright.
+    //
+    // Each constant below is deliberately narrow, because this group is the one
+    // where over-reach breaks a customer. Two facts decided every line:
+    //
+    //   * the documented CI identity is NOT an administrator. admin-guide.md
+    //     §4 creates a user "deployer" (firstName "CI") holding nx-anonymous,
+    //     i.e. browse + read. Whatever that account does today it must keep
+    //     doing: format-native publish under /repository/**, the documented
+    //     POST /api/v1/components/upload, and the browse and search reads.
+    //   * every administrative recipe in docs/ and test-projects/ authenticates
+    //     as admin/admin123 (setup.sh, test-all.sh, test-docker-api.sh,
+    //     test-upgrade.sh, the k6 scripts, admin-guide.md, migration-from-nexus.md).
+    //     Nothing scripted reaches the paths closed here with a lesser account.
+    //
+    // What is NOT listed here is as deliberate as what is; see the chain.
+
+    /**
+     * Scheduled tasks: the list, the schedule, and the run/stop triggers.
+     *
+     * <p>{@code POST /{id}/run} is the reason this is a write surface even
+     * though it carries no body: the seeded task set includes
+     * {@code repository.cleanup} and {@code blobstore.compact}
+     * ({@code V2__seed_default_data.sql}), so triggering an existing task is
+     * enough to start deleting artifacts. The reads go with it — the task list
+     * is the instance's maintenance schedule, and there is no caller for it
+     * outside the {@code /admin/tasks} page.
+     */
+    public static final String TASK_ADMIN_PATH_PATTERN = "/api/v1/tasks/**";
+
+    /**
+     * Blob stores — the storage backends themselves.
+     *
+     * <p>The read is included for a reason of its own: {@code BlobStoreXO}
+     * carries the raw {@code config} map, and for an S3 store that map holds
+     * {@code accessKeyId} and {@code secretAccessKey} as stored. Listing blob
+     * stores therefore hands out the bucket credentials in clear text, which is
+     * the same finding as the NVD firewall's API key and wants the same answer.
+     * {@code DELETE} drops the store while its assets stay in the database,
+     * which orphans every artifact held in it.
+     */
+    public static final String BLOB_STORE_ADMIN_PATH_PATTERN = "/api/v1/blobstores/**";
+
+    /**
+     * Cleanup policies: the rules that decide which artifacts a cleanup task
+     * removes. Rewriting a policy is a delayed delete — the caller does not
+     * remove anything, the next scheduled {@code repository.cleanup} run does.
+     */
+    public static final String CLEANUP_POLICY_ADMIN_PATH_PATTERN = "/api/v1/cleanup-policies/**";
+
+    /**
+     * Routing rules, which decide whether a request is allowed to reach a
+     * repository's upstream at all. A writer can block or divert resolution for
+     * chosen coordinate patterns.
+     */
+    public static final String ROUTING_RULE_ADMIN_PATH_PATTERN = "/api/v1/routing-rules/**";
+
+    /**
+     * The audit log, and its CSV/JSON export of up to 10,000 rows.
+     *
+     * <p>Gated for the payload rather than for any write: every row carries
+     * {@code userId}, {@code ipAddress} and the full artifact {@code path}, so
+     * the export is a record of who fetched what, when, from where — personal
+     * data about the customer's own developers, in a file. The only consumer is
+     * the {@code /admin/audit} page, which the sidebar already files under
+     * Administration.
+     */
+    public static final String AUDIT_PATH_PATTERN = "/api/v1/audit/**";
+
+    /**
+     * The live activity feed: an SSE stream of every upload and download, plus
+     * a {@code /recent} read.
+     *
+     * <p>Same payload as {@link #AUDIT_PATH_PATTERN} — {@code /recent} is
+     * literally the audit log's first page through the same DTO — so it gets
+     * the same answer; leaving it open would have made the audit rule a
+     * formality. Nothing in the web UI subscribes to either endpoint (there is
+     * no {@code EventSource} in the frontend at all), so this closes a surface
+     * that has no client rather than one in use.
+     */
+    public static final String ACTIVITY_PATH_PATTERN = "/api/v1/activity/**";
+
+    /**
+     * Proxy cache administration, nested under a repository.
+     *
+     * <p>{@code POST /invalidate/pattern} takes a regular expression and
+     * {@code .*} matches everything, so one call empties a proxy's cache and
+     * sends every subsequent build back to the upstream — a denial of service
+     * against the build farm, and against an air-gapped installation a
+     * permanent loss of the only copy.
+     *
+     * <p>Listed ahead of the repository rules below because it is the narrower
+     * path; the first matching rule wins.
+     */
+    public static final String REPOSITORY_CACHE_PATH_PATTERN = "/api/v1/repositories/*/cache/**";
+
+    /**
+     * Per-repository blacklists, nested the same way.
+     *
+     * <p>{@code PUT} replaces the whole pattern list, so a single call removes
+     * whatever supply-chain blocking the administrator configured, silently and
+     * without touching any repository setting that the UI would show.
+     */
+    public static final String REPOSITORY_BLACKLIST_PATH_PATTERN = "/api/v1/repositories/*/blacklist/**";
+
+    /**
+     * A single repository, matched with one wildcard segment so that it covers
+     * {@code /api/v1/repositories/{name}} without reaching the nested cache and
+     * blacklist paths above.
+     *
+     * <p>Only {@code DELETE} is gated on it. The chain explains why the other
+     * verbs on this controller stay as they are.
+     */
+    public static final String REPOSITORY_ITEM_PATH_PATTERN = "/api/v1/repositories/*";
+
+    /**
+     * A single component. Only {@code DELETE} is gated: deletion cascades to
+     * the component's assets and removes their blobs from storage.
+     *
+     * <p>The one wildcard segment also spans {@code /api/v1/components/upload},
+     * which is why the rule has to be tied to {@code DELETE}. That path is the
+     * documented publish endpoint (admin-guide.md §5, three CI recipes) and
+     * belongs to {@code UploadController}, a second controller sharing this
+     * prefix; a subtree rule here would have locked out every build job that
+     * publishes an artifact.
+     */
+    public static final String COMPONENT_ITEM_PATH_PATTERN = "/api/v1/components/*";
+
+    /**
+     * A single asset. Only {@code DELETE} is gated: it removes the backing blob
+     * from storage as well as the row.
+     */
+    public static final String ASSET_ITEM_PATH_PATTERN = "/api/v1/assets/*";
+
     @Bean
     public SecurityFilterChain filterChain(
             HttpSecurity http,
@@ -336,6 +477,96 @@ public class SecurityConfig {
                         .requestMatchers(SYSTEM_ADMIN_PATH_PATTERN)
                         .hasRole(ADMIN_ROLE)
                         .requestMatchers(ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // Operational administration: the artifacts, the
+                        // storage they sit in, and the machinery that removes
+                        // them. A tier below the two blocks above in that none
+                        // of it grants a privilege, but the only one of the
+                        // three whose blast radius is destruction rather than
+                        // disclosure — a triggered cleanup task or a deleted
+                        // repository does not come back.
+                        //
+                        // These four are whole-prefix rules, reads included.
+                        // Their only clients are the /admin/* pages of the web
+                        // UI, and no doc or script in the repository calls any
+                        // of them: neither docs/admin-guide.md nor
+                        // docs/migration-from-nexus.md has a section for tasks,
+                        // blob stores, cleanup policies or routing rules, and
+                        // README.md lists them in a table of endpoint
+                        // categories without an example. Nothing that a
+                        // customer could have scripted from the documentation
+                        // reaches them.
+                        .requestMatchers(TASK_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(BLOB_STORE_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(CLEANUP_POLICY_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(ROUTING_RULE_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // Reads, gated for what they contain rather than for
+                        // what they change: both carry userId, IP address and
+                        // artifact path per event, which is a record of what
+                        // the customer's developers do all day. The audit page
+                        // already lives under Administration in the sidebar and
+                        // the activity endpoints have no client at all.
+                        .requestMatchers(AUDIT_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(ACTIVITY_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // Nested under a repository, and listed before the
+                        // repository rules so the narrower path wins. Neither
+                        // has a caller in the web UI or in any doc or script —
+                        // "blacklist" does not appear outside Java source
+                        // anywhere in the repository.
+                        .requestMatchers(REPOSITORY_CACHE_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(REPOSITORY_BLACKLIST_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // From here on the rules are verb-precise, because the
+                        // controllers underneath serve administrators and
+                        // ordinary users from one prefix and a subtree rule
+                        // would take both.
+                        //
+                        // Repositories: DELETE only. Creating and updating a
+                        // repository is the single most heavily documented
+                        // write in the project — admin-guide.md §5 "Creating a
+                        // Repository via API", the three curl blocks in
+                        // migration-from-nexus.md §2.2, test-projects/setup.sh
+                        // provisioning nine repositories in a loop, the upgrade
+                        // and docker test scripts, and two k6 scenarios. A
+                        // customer who followed the migration guide has that in
+                        // a bootstrap job, and an idempotent bootstrap does
+                        // POST-then-PUT, so both stay where they were. Deleting
+                        // a repository appears in no recipe anywhere; the
+                        // Playwright suite that does delete one drives the UI
+                        // as admin rather than calling the API.
+                        //
+                        // The reads stay open for a plainer reason: GET
+                        // /api/v1/repositories is called from eight pages of
+                        // the web UI, three of them the ordinary user's own
+                        // (dashboard, browse, upload), and from seven scripted
+                        // call sites.
+                        .requestMatchers(HttpMethod.DELETE, REPOSITORY_ITEM_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // Components and assets: DELETE only, for the same
+                        // reason in reverse. Both deletes destroy artifacts and
+                        // their blobs and appear in no recipe. Everything else
+                        // these two prefixes carry is what a read-only account
+                        // is for — browsing components, and the documented
+                        // POST /api/v1/components/upload that a build job runs
+                        // after mvn package, npm pack or dotnet pack.
+                        //
+                        // The delete buttons that reach these two endpoints sit
+                        // on the component detail page under /browse, which
+                        // every logged-in user can open, and the frontend on
+                        // this branch has no role gating at all. A non-admin
+                        // will therefore see the buttons and get a 403 toast;
+                        // hiding them is a frontend change and is tracked
+                        // separately.
+                        .requestMatchers(HttpMethod.DELETE, COMPONENT_ITEM_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(HttpMethod.DELETE, ASSET_ITEM_PATH_PATTERN)
                         .hasRole(ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()
