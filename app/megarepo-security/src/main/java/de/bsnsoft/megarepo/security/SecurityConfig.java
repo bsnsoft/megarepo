@@ -64,6 +64,110 @@ public class SecurityConfig {
      */
     public static final String FIREWALL_ADMIN_ROLE = "nx-admin";
 
+    /**
+     * The administrator role, without the {@code ROLE_} prefix, as seeded by
+     * {@code V2__seed_default_data.sql}. Same value as
+     * {@link #FIREWALL_ADMIN_ROLE}; named separately because the firewall rules
+     * and the rules below answer different questions and could in principle
+     * diverge.
+     */
+    public static final String ADMIN_ROLE = "nx-admin";
+
+    /**
+     * User administration: create, list, modify and delete accounts, reset any
+     * account's password, and — the reason this is the most severe gap of the
+     * set — assign roles.
+     *
+     * <p>Until this matcher existed the path fell through to the blanket
+     * {@code /api/v1/** -> authenticated()}. Because {@code ApiCreateUser}
+     * carries a free-form role list, <em>any</em> logged-in account could
+     * {@code POST} itself a second account holding {@code nx-admin}, or
+     * {@code PUT} its own record and add the role in place. The seeded read-only
+     * {@code nx-viewer} — which is also what an LDAP user gets when no group
+     * maps to a role — was enough. Every other rule in this class, including the
+     * firewall rules above, was therefore only as strong as this one omission.
+     */
+    public static final String USER_ADMIN_PATH_PATTERN = "/api/v1/security/users/**";
+
+    /**
+     * The self-service endpoints carved out of {@link #USER_ADMIN_PATH_PATTERN}.
+     *
+     * <p>{@code SecurityUserController} serves the administrative collection and
+     * the caller's own profile from the same prefix, so the subtree cannot
+     * simply be closed. These four are enumerated exactly rather than punched
+     * out with a {@code /me/**} wildcard, so that the hole cannot widen by
+     * accident: a new endpoint added under {@code /me} later is covered by the
+     * admin rule until someone deliberately lists it here, which fails closed
+     * and is noticed immediately.
+     *
+     * <p>None of them can grant a role — {@code PUT /me} binds
+     * {@code ApiUpdateProfile}, which carries names and an e-mail address and no
+     * role list, and the password change verifies the current password first.
+     */
+    public static final String OWN_PROFILE_PATH = "/api/v1/security/users/me";
+
+    public static final String OWN_PROFILE_VERIFY_PASSWORD_PATH = "/api/v1/security/users/me/verify-password";
+
+    public static final String OWN_PROFILE_CHANGE_PASSWORD_PATH = "/api/v1/security/users/me/change-password";
+
+    /**
+     * Role definitions: which privileges a role carries and which roles it
+     * nests. Writable here means privileges can be added to a role the caller
+     * already holds, which is the same escalation as
+     * {@link #USER_ADMIN_PATH_PATTERN} by a different route.
+     */
+    public static final String ROLE_ADMIN_PATH_PATTERN = "/api/v1/security/roles/**";
+
+    /**
+     * Anonymous-access settings: whether unauthenticated repository access is on
+     * at all, and which account it borrows. Pointing it at a privileged account
+     * hands that account's rights to the whole internet.
+     */
+    public static final String ANONYMOUS_ADMIN_PATH_PATTERN = "/api/v1/security/anonymous/**";
+
+    /**
+     * LDAP server configuration — the authentication source itself. A writer can
+     * point the instance at an LDAP server they control and log in as anyone, or
+     * flip {@code ldapGroupsAsRoles} to map a group they own onto
+     * {@code nx-admin}.
+     */
+    public static final String LDAP_ADMIN_PATH_PATTERN = "/api/v1/security/ldap/**";
+
+    /**
+     * The TLS truststore. Adding a CA here makes this instance trust
+     * certificates that CA issues, so a writer can make a
+     * machine-in-the-middle proxy look legitimate to every outbound proxy-repo
+     * fetch.
+     */
+    public static final String SSL_ADMIN_PATH_PATTERN = "/api/v1/security/ssl/**";
+
+    /**
+     * Outbound HTTP proxy settings, which carry stored proxy credentials, and
+     * license administration. A writer can route all outbound repository traffic
+     * through a host of their choosing.
+     *
+     * <p>{@code GET /api/v1/system/license} is deliberately <b>not</b> covered;
+     * see the chain for why.
+     */
+    public static final String SYSTEM_ADMIN_PATH_PATTERN = "/api/v1/system/**";
+
+    /**
+     * Bulk repository import/export and the Nexus migration runner. The import
+     * accepts a YAML document describing repositories to create, and the
+     * migration executes against a remote Nexus with supplied credentials.
+     *
+     * <p>Also covers {@link #FIREWALL_ADMIN_PATH_PATTERN}, which stays listed
+     * separately: it is the narrower and better-documented rule, it is asserted
+     * by its own test, and leaving it in place keeps that test meaningful.
+     */
+    public static final String ADMIN_PATH_PATTERN = "/api/v1/admin/**";
+
+    /**
+     * Read of the license banner, shown in the sidebar and on the dashboard to
+     * every logged-in user.
+     */
+    public static final String LICENSE_PATH = "/api/v1/system/license";
+
     @Bean
     public SecurityFilterChain filterChain(
             HttpSecurity http,
@@ -123,6 +227,62 @@ public class SecurityConfig {
                         // never tightens an earlier one.
                         .requestMatchers(NVD_FIREWALL_PATH_PATTERN)
                         .hasRole(FIREWALL_ADMIN_ROLE)
+                        // Identity and access administration. These four decide
+                        // who exists, what they may do, and where the instance
+                        // gets its identities from — so they gate every other
+                        // rule in this class, the firewall rules above included.
+                        // All of them fell through to /api/v1/** ->
+                        // authenticated() before, which made the whole role
+                        // model advisory: a read-only account could POST itself
+                        // an nx-admin user and come back as an administrator.
+                        //
+                        // The self-service endpoints have to be listed first.
+                        // The first matching rule wins, so these exact paths
+                        // escape the admin rule that follows, while everything
+                        // else under the users prefix — the collection, the
+                        // per-user records, the administrative password reset —
+                        // does not.
+                        .requestMatchers(HttpMethod.GET, OWN_PROFILE_PATH)
+                        .authenticated()
+                        .requestMatchers(HttpMethod.PUT, OWN_PROFILE_PATH)
+                        .authenticated()
+                        .requestMatchers(HttpMethod.POST, OWN_PROFILE_VERIFY_PASSWORD_PATH)
+                        .authenticated()
+                        .requestMatchers(HttpMethod.PUT, OWN_PROFILE_CHANGE_PASSWORD_PATH)
+                        .authenticated()
+                        .requestMatchers(USER_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(ROLE_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(ANONYMOUS_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(LDAP_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // System administration. Lower severity than the block
+                        // above — none of it hands out a role directly — but
+                        // each one is a way to redirect or intercept what the
+                        // instance does: trust a chosen CA, route outbound
+                        // traffic through a chosen proxy, rewrite the repository
+                        // set from a YAML document, drive a migration against a
+                        // remote Nexus.
+                        .requestMatchers(SSL_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        // Exception inside SYSTEM_ADMIN_PATH_PATTERN: the
+                        // license banner is read by the sidebar and the
+                        // dashboard on every page load, for every logged-in
+                        // user, not just administrators. Gating the read would
+                        // blank that banner for non-admins — a behavior change
+                        // with no security benefit, since the payload is the
+                        // edition, the licensee and a seat count, all of which
+                        // the same user already sees rendered. Installing and
+                        // removing a license are administrative and are covered
+                        // by the rule below.
+                        .requestMatchers(HttpMethod.GET, LICENSE_PATH)
+                        .authenticated()
+                        .requestMatchers(SYSTEM_ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
+                        .requestMatchers(ADMIN_PATH_PATTERN)
+                        .hasRole(ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()
                         .requestMatchers("/actuator/**")

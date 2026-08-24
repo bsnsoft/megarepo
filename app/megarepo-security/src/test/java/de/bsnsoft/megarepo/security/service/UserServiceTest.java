@@ -3,12 +3,16 @@ package de.bsnsoft.megarepo.security.service;
 import de.bsnsoft.megarepo.core.security.UserStatus;
 import de.bsnsoft.megarepo.database.entity.UserEntity;
 import de.bsnsoft.megarepo.database.repository.UserJpaRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -39,8 +43,26 @@ class UserServiceTest {
         userService = new UserService(userJpaRepository, passwordEncoder);
     }
 
+    @AfterEach
+    void clearContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    /**
+     * Handing out a role now requires an administrator; see
+     * {@link UserServiceRoleAssignmentTest} for that rule and why it exists.
+     * This test is about password hashing, so it establishes the caller it needs
+     * and stays focused on what it was written to prove.
+     */
+    private static void authenticateAsAdmin() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(new UsernamePasswordAuthenticationToken(
+                        "admin", null, java.util.List.of(new SimpleGrantedAuthority("ROLE_nx-admin"))));
+    }
+
     @Test
     void createUser_hashesPasswordWithBCrypt() {
+        authenticateAsAdmin();
         when(userJpaRepository.existsById("testuser")).thenReturn(false);
         when(userJpaRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
