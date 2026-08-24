@@ -3,6 +3,8 @@ package de.bsnsoft.megarepo.tasks.advisory;
 import de.bsnsoft.megarepo.repository.advisory.AdvisoryIngestService;
 import de.bsnsoft.megarepo.repository.advisory.AdvisorySource;
 import de.bsnsoft.megarepo.repository.advisory.AdvisorySyncSummary;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineProperties;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.tasks.TaskRunner;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -36,6 +39,7 @@ class AdvisorySyncTaskTest {
 
     @Mock private AdvisoryIngestService ingestService;
     @Mock private TaskRunner taskRunner;
+    @Mock private QuarantineService quarantine;
 
     @Test
     @DisplayName("registration does not start an import")
@@ -106,11 +110,83 @@ class AdvisorySyncTaskTest {
         assertThat(AdvisorySyncTask.TASK_TYPE).isEqualTo("security.advisory.sync");
     }
 
+    @Test
+    @DisplayName("a successful sync sweeps the quarantine queue — new data is the moment answers change")
+    void successfulSyncTriggersReevaluation() {
+        when(ingestService.syncAll(any())).thenReturn(List.of(ok("OSV")));
+        AdvisorySyncTask task = task(AdvisorySyncProperties.defaults(), source("OSV"));
+
+        task.execute();
+
+        verify(quarantine).reevaluateDue(any(), eq(QuarantineProperties.defaults().reevaluationBatchSize()));
+    }
+
+    @Test
+    @DisplayName("reevaluate-after-advisory-sync=false switches the hook off and nothing else")
+    void hookIsSwitchableOff() {
+        when(ingestService.syncAll(any())).thenReturn(List.of(ok("OSV")));
+        QuarantineProperties noHook = new QuarantineProperties(
+                true, 200, Duration.ofMinutes(5), Duration.ofHours(6), false, Duration.ofDays(90));
+        AdvisorySyncTask task = task(AdvisorySyncProperties.defaults(), noHook, source("OSV"));
+
+        task.execute();
+
+        verify(ingestService).syncAll(any());
+        verifyNoInteractions(quarantine);
+    }
+
+    @Test
+    @DisplayName("quarantine disabled: the sync still runs, the sweep does not")
+    void disabledQuarantineSkipsTheSweep() {
+        when(ingestService.syncAll(any())).thenReturn(List.of(ok("OSV")));
+        AdvisorySyncTask task =
+                task(AdvisorySyncProperties.defaults(), QuarantineProperties.disabled(), source("OSV"));
+
+        task.execute();
+
+        verify(ingestService).syncAll(any());
+        verifyNoInteractions(quarantine);
+    }
+
+    @Test
+    @DisplayName("a sweep that throws does not fail the sync — the import succeeded")
+    void aFailingSweepDoesNotFailTheSync() {
+        when(ingestService.syncAll(any())).thenReturn(List.of(ok("OSV")));
+        when(quarantine.reevaluateDue(any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenThrow(new IllegalStateException("queue unreachable"));
+        AdvisorySyncTask task = task(AdvisorySyncProperties.defaults(), source("OSV"));
+
+        assertThatCode(task::execute).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("a total failure throws before the sweep — nothing new arrived to re-evaluate")
+    void totalFailureSkipsTheSweep() {
+        when(ingestService.syncAll(any())).thenReturn(List.of(failed("OSV")));
+        AdvisorySyncTask task = task(AdvisorySyncProperties.defaults(), source("OSV"));
+
+        assertThatThrownBy(task::execute).isInstanceOf(IllegalStateException.class);
+
+        verifyNoInteractions(quarantine);
+    }
+
     private AdvisorySyncTask task(AdvisorySyncProperties properties, AdvisorySource... sources) {
+        return task(properties, QuarantineProperties.defaults(), sources);
+    }
+
+    private AdvisorySyncTask task(
+            AdvisorySyncProperties properties,
+            QuarantineProperties quarantineProperties,
+            AdvisorySource... sources) {
         @SuppressWarnings("unchecked")
         ObjectProvider<AdvisorySource> provider = mock(ObjectProvider.class);
         when(provider.orderedStream()).thenReturn(Stream.of(sources));
-        return new AdvisorySyncTask(ingestService, provider, taskRunner, properties);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<QuarantineService> quarantineProvider = mock(ObjectProvider.class);
+        when(quarantineProvider.getIfAvailable()).thenReturn(quarantine);
+        return new AdvisorySyncTask(
+                ingestService, provider, taskRunner, properties, quarantineProvider,
+                quarantineProperties);
     }
 
     private static AdvisorySource source(String id) {
