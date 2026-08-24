@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-open-1111-2222",
+  "modified": "2026-04-01T09:15:00Z",
+  "published": "2026-03-28T09:15:00Z",
+  "summary": "Unfixed deserialisation flaw",
+  "details": "No fixed release is available at this time.",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven:https://maven.google.com",
+        "name": "com.acme.tools:serializer"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "1.2.0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

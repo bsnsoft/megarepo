@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-4wq5-8w2v-3rrq",
+  "modified": "2026-02-20T11:04:00Z",
+  "published": "2025-11-03T18:12:00Z",
+  "withdrawn": "2026-02-20T11:04:00Z",
+  "summary": "Withdrawn Advisory: incorrectly attributed to Zope.Interface",
+  "details": "This advisory was withdrawn because the reported issue does not affect the released package.",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "Zope.Interface"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "5.4.0"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "MODERATE",
+    "github_reviewed": true
+  }
+}

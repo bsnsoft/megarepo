@@ -108,6 +108,95 @@ megarepo:
     password: ""
     # Hosts/patterns that bypass the proxy, e.g. ["localhost", "*.internal.example.com"]
     non-proxy-hosts: []
+  firewall:
+    # GitHub Advisory (GHSA) source of the repository firewall.
+    #
+    # The token is optional and MegaRepo starts without it — but GitHub's anonymous
+    # limit of 60 requests/hour per IP cannot carry an advisory import, so without a
+    # token this one source disables itself (visible as "disabled:no-token" in
+    # advisory_sync_state.cursor) and makes no requests at all. NVD and OSV are
+    # unaffected. A classic PAT with no scopes is enough; the advisory database is
+    # public and the token only raises the rate limit.
+    ghsa:
+      enabled: true
+      token: ${MEGAREPO_GHSA_TOKEN:}
+      # Pages fetched per sync run before handing back a resumable cursor.
+      pages-per-sync: 5
+      # "reviewed" is GitHub's curated set; "malware" and "unreviewed" also exist.
+      type: reviewed
+    advisory:
+      sync:
+        # Deployment-level switch for the scheduled advisory sync
+        # (task type security.advisory.sync, seeded by V15 for 02:30 daily).
+        # The scheduled_tasks row's own "enabled" flag is the operator's switch;
+        # this one is the environment's. Nothing is imported at startup.
+        enabled: true
+    # Repository firewall enforcement — the global master switch.
+    #
+    # OFF BY DEFAULT, and while it is off nothing is ever blocked, no matter what
+    # mode a single repository is in. Blocking needs BOTH of these:
+    #
+    #   1. this switch on, and
+    #   2. the repository's firewall_repository_config.mode = QUARANTINE.
+    #
+    # This value is only the fallback. Once the switch has been set through the
+    # API/UI, the firewall_enforcement_settings row wins and this property is
+    # ignored — the same layering megarepo.outbound-proxy.* uses. Flipping the
+    # switch takes effect without a restart.
+    #
+    # When enforcement is first switched on, the moment is recorded. Components
+    # already stored in a repository before that moment are audited but never
+    # blocked, so switching it on cannot break a build that depends on something
+    # already cached.
+    enforcement:
+      enabled: false
+      # How long a download may wait for a verdict. The evaluation only reads the
+      # local database, so this bounds the pathological case. Exceeding it is not
+      # an "allowed" answer — the repository's fail_mode decides (FAIL_OPEN
+      # serves, FAIL_CLOSED denies), and FAIL_OPEN is the default.
+      evaluation-timeout: 2s
+      # How long the master switch is cached in memory. It is read on every
+      # download, so it is not fetched per request; a change made through the API
+      # applies immediately on this node, and this bounds how long a change made
+      # elsewhere takes to be noticed.
+      settings-refresh-interval: 10s
+      # Pool that runs the evaluation off the request thread, and its bounded
+      # backlog. A rejected evaluation is an "unavailable" verdict handed to
+      # fail_mode, never a queued request.
+      threads: 4
+      queue-capacity: 200
+    # Repository firewall observation — AUDIT. NOTHING HERE BLOCKS A DOWNLOAD.
+    #
+    # The observation runs after the artifact has already been streamed to the
+    # client: it identifies the component (purl), asks the local advisory mirror
+    # which advisories name it, and writes what it found to firewall_violation.
+    # A repository set to QUARANTINE is observed exactly like AUDIT unless the
+    # enforcement switch above is on, and the recorded rows say which it was
+    # (enforced=true/false).
+    audit:
+      enabled: true
+      # Mode for repositories with no firewall_repository_config row.
+      #
+      # OFF by default so that deploying this build changes nothing for an
+      # existing installation. Set to AUDIT to observe every repository, which
+      # is what a Phase 1 evaluation against real traffic wants; a single
+      # repository can be opted in instead by giving it a config row (whose own
+      # column default is AUDIT).
+      default-mode: OFF
+      # Size and backlog of the observation pool. When the backlog is full,
+      # observations are dropped and counted — downloads are never slowed down
+      # to keep the audit trail complete.
+      threads: 2
+      queue-capacity: 500
+      # An identical finding for the same component in the same repository is
+      # recorded at most once per window. A changed advisory set is recorded
+      # immediately regardless. Set to 0 to record every single observation.
+      suppression-window: 24h
+      # Per-node, in-memory shortcut: a path evaluated within this interval is
+      # not looked up again. Keeps a hot artifact from re-querying the advisory
+      # tables on every request.
+      reevaluation-interval: 10m
+      reevaluation-cache-size: 10000
   docker:
     default-repository: docker-hosted
   license:

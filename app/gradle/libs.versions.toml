@@ -16,6 +16,8 @@ testcontainers = "1.21.4" # = spring-boot 3.5.16 BOM
 guava = "33.7.1-jre"
 aws-sdk = "2.54.2"
 spotless = "7.2.1"
+maven-artifact = "3.9.16"
+packageurl = "1.5.0"
 
 [libraries]
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
@@ -43,6 +45,8 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter" }
 
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
+maven-artifact = { module = "org.apache.maven:maven-artifact", version.ref = "maven-artifact" }
+packageurl-java = { module = "com.github.package-url:packageurl-java", version.ref = "packageurl" }
 commons-codec = { module = "commons-codec:commons-codec", version = "1.18.0" } # = spring-boot 3.5.16 BOM
 jackson-dataformat-xml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-xml" }
 

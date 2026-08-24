@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-bad0-c00r-dnat",
+  "modified": "2026-01-02T00:00:00Z",
+  "published": "2025-12-31T00:00:00Z",
+  "summary": "Advisory whose Maven package name is missing its groupId",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven",
+        "name": "serializer"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "1.0.0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
