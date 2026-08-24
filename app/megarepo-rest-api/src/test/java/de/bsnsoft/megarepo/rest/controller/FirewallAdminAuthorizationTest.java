@@ -2,11 +2,13 @@ package de.bsnsoft.megarepo.rest.controller;
 
 import de.bsnsoft.megarepo.database.entity.FirewallEnforcementSettingsEntity;
 import de.bsnsoft.megarepo.database.repository.FirewallEnforcementSettingsJpaRepository;
+import de.bsnsoft.megarepo.database.repository.FirewallPolicyJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallRepositoryConfigJpaRepository;
 import de.bsnsoft.megarepo.database.repository.FirewallViolationJpaRepository;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
 import de.bsnsoft.megarepo.repository.firewall.FirewallAuditProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementSettingsService;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.security.SecurityConfig;
 import de.bsnsoft.megarepo.security.auth.AnonymousAccessFilter;
 import de.bsnsoft.megarepo.security.auth.JwtAuthenticationFilter;
@@ -33,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -79,6 +82,12 @@ class FirewallAdminAuthorizationTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        // The mock beans are singletons in a Spring context that is cached
+        // across test methods, so recorded interactions would otherwise carry
+        // from one method into the next and make the never() assertions below
+        // report a neighbour's calls instead of their own. Ahead of the
+        // stubbing, which reset() would otherwise wipe.
+        reset(enforcementRepo, enforcementSettings);
         when(enforcementRepo.current()).thenReturn(new FirewallEnforcementSettingsEntity());
     }
 
@@ -135,14 +144,28 @@ class FirewallAdminAuthorizationTest {
                 FirewallEnforcementSettingsJpaRepository enforcementRepo,
                 FirewallRepositoryConfigJpaRepository configRepo,
                 FirewallViolationJpaRepository violationRepo,
-                RepositoryJpaRepository repositoryRepo) {
+                RepositoryJpaRepository repositoryRepo,
+                FirewallPolicyJpaRepository policyRepo,
+                QuarantineService quarantine) {
             return new FirewallAdminController(
                     enforcementSettings,
                     enforcementRepo,
                     configRepo,
                     violationRepo,
                     repositoryRepo,
+                    policyRepo,
+                    quarantine,
                     FirewallAuditProperties.defaults());
+        }
+
+        @Bean
+        FirewallPolicyJpaRepository firewallPolicyRepository() {
+            return mock(FirewallPolicyJpaRepository.class);
+        }
+
+        @Bean
+        QuarantineService quarantineService() {
+            return mock(QuarantineService.class);
         }
 
         @Bean

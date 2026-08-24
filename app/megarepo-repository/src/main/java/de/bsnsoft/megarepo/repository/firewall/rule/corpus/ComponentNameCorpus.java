@@ -1,0 +1,434 @@
+package de.bsnsoft.megarepo.repository.firewall.rule.corpus;
+
+import com.github.packageurl.PackageURL;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
+
+/**
+ * An immutable snapshot of the package names this instance holds, indexed for
+ * the two heuristic rules.
+ *
+ * <h2>Why the local components table is the corpus</h2>
+ *
+ * The obvious corpus for a typosquat check is a popularity feed — the top 10 000
+ * names on npm. This instance uses its own {@code components} table instead, for
+ * four reasons that all point the same way: those are the packages this
+ * organisation actually depends on and therefore exactly the names worth
+ * squatting <em>at this customer</em>; it needs no external feed, no scheduled
+ * download and no network on any path; it cannot be gamed by whoever publishes
+ * the list; and it makes the rule's evidence checkable — "resembles
+ * {@code lodash}, which you hold in 4 versions" is a statement an operator can
+ * verify in the UI, while "resembles a popular package" is an appeal to a file
+ * nobody has read. The wave plan settles this explicitly (§5.6), and a stored
+ * corpus table would be a contract change rather than something this package
+ * decides.
+ *
+ * <h2>Why it is an index and not a list</h2>
+ *
+ * The firewall's budget is 20 ms for a whole evaluation, of which this rule is
+ * one part, and the naive comparison is "requested name against every known
+ * name". The indexes below cut that to the only candidates that can possibly be
+ * within {@code maxDistance}:
+ *
+ * <ul>
+ *   <li>by purl type and skeleton <b>length</b> — an edit changes a name's
+ *       length by at most one per edit, so only the length window
+ *       {@code [len - max, len + max]} can qualify;</li>
+ *   <li>by purl type and skeleton — the exact-skeleton bucket, which is the
+ *       separator/homoglyph case and also the candidate set for a namespace
+ *       near-miss;</li>
+ *   <li>counts per namespace and per name family, which is how the rule
+ *       recognises an established namespace or a sibling package and stays
+ *       quiet about them.</li>
+ * </ul>
+ *
+ * <p>Instances are built once in the background by {@link ComponentCorpusService}
+ * and then read concurrently by every download. Nothing here mutates after
+ * {@link Builder#build}.
+ */
+public final class ComponentNameCorpus {
+
+    private static final char SEP = '\0';
+
+    private static final ComponentNameCorpus NEVER_LOADED = new ComponentNameCorpus(
+            List.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
+            null, 0, false);
+
+    private final List<CorpusEntry> entries;
+    private final Map<String, List<CorpusEntry>> byTypeAndLength;
+    private final Map<String, List<CorpusEntry>> byTypeAndNameSkeleton;
+    private final Map<String, Integer> namesPerNamespace;
+    private final Map<String, Integer> namesPerFamily;
+    private final Map<String, CorpusEntry> hostedNamespaces;
+    private final Map<String, CorpusEntry> hostedCoordinates;
+    private final Map<String, CorpusEntry> byCoordinate;
+    private final Instant loadedAt;
+    private final long scannedComponents;
+    private final boolean truncated;
+
+    private ComponentNameCorpus(
+            List<CorpusEntry> entries,
+            Map<String, List<CorpusEntry>> byTypeAndLength,
+            Map<String, List<CorpusEntry>> byTypeAndNameSkeleton,
+            Map<String, Integer> namesPerNamespace,
+            Map<String, Integer> namesPerFamily,
+            Map<String, CorpusEntry> hostedNamespaces,
+            Map<String, CorpusEntry> hostedCoordinates,
+            Map<String, CorpusEntry> byCoordinate,
+            Instant loadedAt,
+            long scannedComponents,
+            boolean truncated) {
+        this.entries = entries;
+        this.byTypeAndLength = byTypeAndLength;
+        this.byTypeAndNameSkeleton = byTypeAndNameSkeleton;
+        this.namesPerNamespace = namesPerNamespace;
+        this.namesPerFamily = namesPerFamily;
+        this.hostedNamespaces = hostedNamespaces;
+        this.hostedCoordinates = hostedCoordinates;
+        this.byCoordinate = byCoordinate;
+        this.loadedAt = loadedAt;
+        this.scannedComponents = scannedComponents;
+        this.truncated = truncated;
+    }
+
+    /**
+     * The corpus before the first load has finished.
+     *
+     * <p>Distinct from a corpus that loaded and turned out to be empty, and the
+     * two rules read the difference differently — see
+     * {@code NamespaceConfusionRule}, which reports "cannot decide" rather than
+     * "nothing found" while this is the state.
+     */
+    public static ComponentNameCorpus notLoadedYet() {
+        return NEVER_LOADED;
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Whether no load has ever completed. */
+    public boolean neverLoaded() {
+        return loadedAt == null;
+    }
+
+    /** Whether the corpus holds no names — either never loaded, or genuinely empty. */
+    public boolean isEmpty() {
+        return entries.isEmpty();
+    }
+
+    /** How many distinct package names the corpus holds. */
+    public int size() {
+        return entries.size();
+    }
+
+    /** When the load that produced this snapshot finished, or null if none has. */
+    public Instant loadedAt() {
+        return loadedAt;
+    }
+
+    /** How many component rows were read to build it. */
+    public long scannedComponents() {
+        return scannedComponents;
+    }
+
+    /** Whether the scan stopped at its configured cap and the corpus is therefore partial. */
+    public boolean truncated() {
+        return truncated;
+    }
+
+    /** Every entry, for diagnostics and tests. */
+    public List<CorpusEntry> entries() {
+        return entries;
+    }
+
+    /**
+     * Visits every corpus name of the given purl type whose skeleton length is
+     * within {@code maxDistance} of {@code length}.
+     *
+     * <p>A callback rather than a returned list: the rule runs on the download
+     * path and the candidate set is walked once, so copying it into a new list
+     * would allocate for nothing.
+     */
+    public void forEachCandidateByLength(
+            String purlType, int length, int maxDistance, Consumer<CorpusEntry> visitor) {
+        int lower = Math.max(0, length - Math.max(0, maxDistance));
+        int upper = length + Math.max(0, maxDistance);
+        for (int candidateLength = lower; candidateLength <= upper; candidateLength++) {
+            List<CorpusEntry> bucket = byTypeAndLength.get(lengthKey(purlType, candidateLength));
+            if (bucket != null) {
+                bucket.forEach(visitor);
+            }
+        }
+    }
+
+    /** Every corpus name of this purl type whose skeleton is exactly {@code nameSkeleton}. */
+    public List<CorpusEntry> byNameSkeleton(String purlType, String nameSkeleton) {
+        return byTypeAndNameSkeleton.getOrDefault(
+                key(purlType, nameSkeleton), List.of());
+    }
+
+    /**
+     * How many distinct names this instance holds under a namespace, counted on
+     * the <em>exact</em> namespace rather than its skeleton.
+     *
+     * <p>The measure of "this is a namespace we use": a scope with a dozen
+     * packages in it is part of the organisation's supply chain, not a look-alike
+     * of the scope next to it.
+     *
+     * <p>Exactness is the whole point here. Counted on skeletons, {@code @babe1}
+     * would inherit {@code @babel}'s standing — the guard meant to protect
+     * established namespaces would protect the impostor instead, and the better
+     * the disguise the more reliably it worked.
+     */
+    public int namesInNamespace(String purlType, String namespace) {
+        return namesPerNamespace.getOrDefault(key(purlType, NameSkeleton.plain(namespace)), 0);
+    }
+
+    /**
+     * How many distinct names share a first segment inside one namespace —
+     * the size of the {@code lodash.*} family.
+     */
+    public int namesInFamily(String purlType, String namespaceSkeleton, String firstSegmentSkeleton) {
+        return namesPerFamily.getOrDefault(
+                key(purlType, namespaceSkeleton + SEP + firstSegmentSkeleton), 0);
+    }
+
+    /**
+     * A package published into a hosted repository under exactly this namespace,
+     * or null.
+     *
+     * <p>Exact, plain-text comparison: this answers "does this coordinate belong
+     * to us", and a folded comparison would answer "does it look like it does",
+     * which is the other rule's question.
+     */
+    public CorpusEntry hostedInNamespace(String purlType, String namespace) {
+        return hostedNamespaces.get(key(purlType, NameSkeleton.plain(namespace)));
+    }
+
+    /**
+     * The corpus entry for exactly these coordinates, or null if this instance
+     * does not hold the package.
+     *
+     * <p>Lets a rule ask how established the package in front of it is, rather
+     * than only how established the things it resembles are. Without that, the
+     * first time a squat is cached it joins the corpus, and every later download
+     * of the <em>real</em> package is reported as resembling the impostor.
+     */
+    public CorpusEntry entryFor(String purlType, String namespace, String name) {
+        return byCoordinate.get(
+                key(purlType, NameSkeleton.plain(namespace) + SEP + NameSkeleton.plain(name)));
+    }
+
+    /** How many versions of exactly this package the instance holds; 0 if none. */
+    public int versionsOf(String purlType, String namespace, String name) {
+        CorpusEntry entry = entryFor(purlType, namespace, name);
+        return entry == null ? 0 : entry.versions();
+    }
+
+    /** The hosted package with exactly these coordinates, or null. */
+    public CorpusEntry hostedCoordinate(String purlType, String namespace, String name) {
+        return hostedCoordinates.get(
+                key(purlType, NameSkeleton.plain(namespace) + SEP + NameSkeleton.plain(name)));
+    }
+
+    private static String key(String purlType, String rest) {
+        return NameSkeleton.plain(purlType) + SEP + rest;
+    }
+
+    private static String lengthKey(String purlType, int length) {
+        return NameSkeleton.plain(purlType) + SEP + length;
+    }
+
+    /**
+     * Accumulates components into a corpus.
+     *
+     * <p>Not thread-safe, and does not need to be: one background load fills one
+     * builder and publishes the finished snapshot in a single reference write.
+     */
+    public static final class Builder {
+
+        private final Map<String, Aggregate> aggregates = new HashMap<>();
+        private long scanned;
+        private boolean truncated;
+
+        /**
+         * Adds one stored component.
+         *
+         * @param purl the component's package-URL, produced by the same
+         *     {@code PurlBuilder} the download path uses. Going through the purl
+         *     rather than reading the {@code components} columns directly is what
+         *     makes the corpus comparable with the request at all: the format
+         *     modules normalise npm scopes and PEP 503 names on the way in, and a
+         *     corpus built from the raw columns would compare
+         *     {@code Django} against {@code django} and call it a squat
+         * @param hosted whether the repository it lives in is hosted
+         * @param repositoryName that repository's name, for the evidence text
+         */
+        public Builder add(PackageURL purl, boolean hosted, String repositoryName) {
+            if (purl == null) {
+                return this;
+            }
+            scanned++;
+            String type = NameSkeleton.plain(purl.getType());
+            String namespace = purl.getNamespace();
+            String name = purl.getName();
+            if (type.isEmpty() || name == null || name.isBlank()) {
+                return this;
+            }
+            String key = type + SEP + NameSkeleton.plain(namespace) + SEP + NameSkeleton.plain(name);
+            Aggregate aggregate = aggregates.computeIfAbsent(
+                    key, ignored -> new Aggregate(type, namespace, name));
+            aggregate.versions.add(purl.getVersion() == null ? "" : purl.getVersion());
+            if (hosted) {
+                aggregate.hosted = true;
+                if (aggregate.hostedRepository == null) {
+                    aggregate.hostedRepository = repositoryName;
+                }
+            }
+            if (aggregate.anyRepository == null) {
+                aggregate.anyRepository = repositoryName;
+            }
+            return this;
+        }
+
+        /** Records that the scan stopped early at its cap. */
+        public Builder truncated(boolean value) {
+            this.truncated = value;
+            return this;
+        }
+
+        /**
+         * Records how many component rows were actually read.
+         *
+         * <p>{@link #add} only counts rows that produced a purl, and a scan has
+         * to bound itself by rows <em>read</em> — an instance whose components
+         * are mostly raw files would otherwise page through the whole table
+         * without ever reaching the cap that was supposed to stop it.
+         */
+        public Builder scanned(long rows) {
+            this.scanned = Math.max(this.scanned, rows);
+            return this;
+        }
+
+        /** How many components have been counted so far. */
+        public long scanned() {
+            return scanned;
+        }
+
+        /** Freezes the accumulated names into an indexed snapshot. */
+        public ComponentNameCorpus build(Instant loadedAt) {
+            List<CorpusEntry> entries = new ArrayList<>(aggregates.size());
+            Map<String, List<CorpusEntry>> byLength = new HashMap<>();
+            Map<String, List<CorpusEntry>> bySkeleton = new HashMap<>();
+            Map<String, Integer> perNamespace = new HashMap<>();
+            Map<String, Integer> perFamily = new HashMap<>();
+            Map<String, CorpusEntry> hostedNamespaces = new HashMap<>();
+            Map<String, CorpusEntry> hostedCoordinates = new HashMap<>();
+            Map<String, CorpusEntry> byCoordinate = new HashMap<>();
+            Set<String> countedNames = new HashSet<>();
+
+            for (Aggregate aggregate : aggregates.values()) {
+                CorpusEntry entry = aggregate.toEntry();
+                if (entry.nameSkeleton().isEmpty()) {
+                    continue;
+                }
+                entries.add(entry);
+                byCoordinate.put(
+                        key(entry.purlType(),
+                                NameSkeleton.plain(entry.namespace()) + SEP
+                                        + NameSkeleton.plain(entry.name())),
+                        entry);
+                byLength.computeIfAbsent(
+                                lengthKey(entry.purlType(), entry.nameSkeleton().length()),
+                                ignored -> new ArrayList<>())
+                        .add(entry);
+                bySkeleton.computeIfAbsent(
+                                key(entry.purlType(), entry.nameSkeleton()),
+                                ignored -> new ArrayList<>())
+                        .add(entry);
+
+                String namespaceKey =
+                        key(entry.purlType(), NameSkeleton.plain(entry.namespace()));
+                String familyKey = key(
+                        entry.purlType(),
+                        entry.namespaceSkeleton() + SEP + entry.firstSegmentSkeleton());
+                if (countedNames.add(namespaceKey + SEP + entry.nameSkeleton())) {
+                    perNamespace.merge(namespaceKey, 1, Integer::sum);
+                }
+                if (countedNames.add(familyKey + SEP + entry.nameSkeleton())) {
+                    perFamily.merge(familyKey, 1, Integer::sum);
+                }
+
+                if (entry.hosted()) {
+                    hostedNamespaces.putIfAbsent(
+                            key(entry.purlType(), NameSkeleton.plain(entry.namespace())), entry);
+                    hostedCoordinates.putIfAbsent(
+                            key(entry.purlType(),
+                                    NameSkeleton.plain(entry.namespace()) + SEP
+                                            + NameSkeleton.plain(entry.name())),
+                            entry);
+                }
+            }
+
+            return new ComponentNameCorpus(
+                    Collections.unmodifiableList(entries),
+                    unmodifiableLists(byLength),
+                    unmodifiableLists(bySkeleton),
+                    Map.copyOf(perNamespace),
+                    Map.copyOf(perFamily),
+                    Map.copyOf(hostedNamespaces),
+                    Map.copyOf(hostedCoordinates),
+                    Map.copyOf(byCoordinate),
+                    loadedAt == null ? Instant.EPOCH : loadedAt,
+                    scanned,
+                    truncated);
+        }
+
+        private static Map<String, List<CorpusEntry>> unmodifiableLists(
+                Map<String, List<CorpusEntry>> source) {
+            Map<String, List<CorpusEntry>> copy = new HashMap<>(source.size() * 2);
+            source.forEach((key, value) -> copy.put(key, Collections.unmodifiableList(value)));
+            return Collections.unmodifiableMap(copy);
+        }
+
+        private static final class Aggregate {
+
+            private final String type;
+            private final String namespace;
+            private final String name;
+            private final Set<String> versions = new HashSet<>(2);
+            private boolean hosted;
+            private String hostedRepository;
+            private String anyRepository;
+
+            private Aggregate(String type, String namespace, String name) {
+                this.type = type;
+                this.namespace = namespace;
+                this.name = name;
+            }
+
+            private CorpusEntry toEntry() {
+                List<String> segments = NameSkeleton.segments(name);
+                return new CorpusEntry(
+                        type,
+                        namespace,
+                        name,
+                        NameSkeleton.of(namespace),
+                        NameSkeleton.of(name),
+                        segments.isEmpty() ? NameSkeleton.of(name) : segments.get(0),
+                        versions.size(),
+                        hosted,
+                        hosted ? hostedRepository : anyRepository);
+            }
+        }
+    }
+}

@@ -3,6 +3,8 @@ package de.bsnsoft.megarepo.tasks.advisory;
 import de.bsnsoft.megarepo.repository.advisory.AdvisoryIngestService;
 import de.bsnsoft.megarepo.repository.advisory.AdvisorySource;
 import de.bsnsoft.megarepo.repository.advisory.AdvisorySyncSummary;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineProperties;
+import de.bsnsoft.megarepo.repository.firewall.quarantine.QuarantineService;
 import de.bsnsoft.megarepo.tasks.TaskRunner;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -51,16 +54,22 @@ public class AdvisorySyncTask {
     private final ObjectProvider<AdvisorySource> sources;
     private final TaskRunner taskRunner;
     private final AdvisorySyncProperties properties;
+    private final ObjectProvider<QuarantineService> quarantine;
+    private final QuarantineProperties quarantineProperties;
 
     public AdvisorySyncTask(
             AdvisoryIngestService ingestService,
             ObjectProvider<AdvisorySource> sources,
             TaskRunner taskRunner,
-            AdvisorySyncProperties properties) {
+            AdvisorySyncProperties properties,
+            ObjectProvider<QuarantineService> quarantine,
+            QuarantineProperties quarantineProperties) {
         this.ingestService = ingestService;
         this.sources = sources;
         this.taskRunner = taskRunner;
         this.properties = properties;
+        this.quarantine = quarantine;
+        this.quarantineProperties = quarantineProperties;
     }
 
     @PostConstruct
@@ -108,6 +117,49 @@ public class AdvisorySyncTask {
         }
         if (failed > 0) {
             log.warn("Advisory sync finished with {} of {} sources failing", failed, summaries.size());
+        }
+
+        reevaluateQuarantine();
+    }
+
+    /**
+     * Re-runs the quarantine sweep now that new advisory data is in.
+     *
+     * <p>A sync is the single event most likely to change an
+     * {@code UNKNOWN_COMPONENT} answer — the data the firewall was waiting for
+     * has just arrived — and the scheduled sweep runs every fifteen minutes.
+     * Waiting for it would be up to a quarter of an hour of a build failing for
+     * information the instance already has. The same
+     * {@link QuarantineService#reevaluateDue} the scheduled task calls: one code
+     * path, two triggers.
+     *
+     * <p>Never fails the sync. The import succeeded; a sweep that did not is a
+     * separate problem, and reporting the task in red for it would send an
+     * operator looking at the advisory sources for a fault that is not there. The
+     * next scheduled sweep picks the entries up regardless.
+     *
+     * <p>Switchable off with
+     * {@code megarepo.firewall.quarantine.reevaluate-after-advisory-sync=false},
+     * and skipped entirely when quarantine is disabled. The service is resolved
+     * through an {@link ObjectProvider} so a deployment assembled without the
+     * quarantine bean still syncs advisories.
+     */
+    private void reevaluateQuarantine() {
+        if (!quarantineProperties.enabled() || !quarantineProperties.reevaluateAfterAdvisorySync()) {
+            return;
+        }
+        QuarantineService service = quarantine.getIfAvailable();
+        if (service == null) {
+            return;
+        }
+        try {
+            int changed = service.reevaluateDue(
+                    Instant.now(), quarantineProperties.reevaluationBatchSize());
+            if (changed > 0) {
+                log.info("Advisory sync released or blocked {} quarantined component(s)", changed);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Post-sync quarantine re-evaluation failed; the scheduled sweep will retry", e);
         }
     }
 }

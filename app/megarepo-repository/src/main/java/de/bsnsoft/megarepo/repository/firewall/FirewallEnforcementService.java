@@ -1,6 +1,8 @@
 package de.bsnsoft.megarepo.repository.firewall;
 
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
+import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
+import de.bsnsoft.megarepo.core.repository.RepositoryType;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The enforcement path: the one place in MegaRepo that can refuse to hand over
- * an artifact because of what an advisory says about it.
+ * an artifact because of what the policy says about it.
  *
  * <h2>When it does anything at all</h2>
  *
@@ -39,13 +41,30 @@ import java.util.concurrent.atomic.AtomicLong;
  * caller falls through to the observation path exactly as before. That is what
  * makes this change invisible to an installation that upgrades into it.
  *
+ * <h2>What this class still owns, and what it no longer does</h2>
+ *
+ * It owns the two switches, the pre-existing watermark, the asset lookup, the
+ * timeout and the off-thread violation write. It does <em>not</em> assemble the
+ * verdict: identifying, short-circuiting on the queue, reading the facts, running
+ * the rules, weighing the exemptions and writing a hold all happen in
+ * {@link FirewallDecisionAssembly}, which the publish gate runs too.
+ *
+ * <p>That split is not tidiness. While the two directions each assembled their own
+ * decision, the download path consulted the exemptions and the publish path did
+ * not, so an approved exemption served a component and refused the very same
+ * component on publish into the very same repository (osTicket #155155). One
+ * assembly is what makes that class of divergence unrepresentable rather than
+ * merely fixed.
+ *
  * <h2>What it costs a download that is enforced</h2>
  *
- * Four indexed reads against the local database: the repository's firewall
- * config, the asset, its component, and the advisories naming it, plus the
- * policy and its rules. No network — advisory feeds are mirrored by a background
- * task and this path only reads the mirror, which is the customer's explicit
- * rule. The work runs on a small dedicated pool and the request waits at most
+ * Local indexed reads only: the repository's firewall config, the asset, its
+ * component, the advisories naming it, the component's facts row, the quarantine
+ * entry, the policy and its rules, plus one exemption lookup per blocking rule
+ * that actually matched. No network — advisory feeds and package metadata are
+ * mirrored by background tasks and this path only reads the mirrors, which is the
+ * customer's explicit rule. The work runs on a small dedicated pool and the
+ * request waits at most
  * {@link FirewallEnforcementProperties#evaluationTimeout()} for it.
  *
  * <h2>When it cannot answer</h2>
@@ -57,18 +76,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code FAIL_OPEN}, because an unavailable firewall breaking every build is a
  * worse failure than a vulnerable artifact slipping through one.
  *
+ * <p>That is distinct from a <em>rule</em> that cannot decide. A rule reporting
+ * {@code INDETERMINATE} — {@code MIN_AGE} with no publication date yet — is not a
+ * fault: the data is expected to arrive. Fail-closed holds such a component under
+ * {@link FirewallQuarantineReason#EVALUATION_INCOMPLETE} so the sweep can release
+ * it by itself; fail-open serves it. Both are decided by
+ * {@link FirewallPolicyEvaluator}, which is where the fail mode is in scope.
+ *
  * <p>The one thing that never happens is a download failing for a reason other
  * than a deliberate verdict. Every entry point catches {@link RuntimeException}
  * and answers "serve": if the firewall is broken in a way its own fail mode did
  * not anticipate, it gets out of the way.
- *
- * <h2>What it does not do</h2>
- *
- * It does not quarantine. A denied artifact is not served, but for a proxy
- * repository it has already been fetched and cached by the format handler by the
- * time this runs — there is no state machine holding it in a separate place, and
- * no release/approve workflow. Subsequent requests for it are denied again by
- * the same evaluation rather than by a stored quarantine state.
  */
 @Service
 public class FirewallEnforcementService {
@@ -79,7 +97,7 @@ public class FirewallEnforcementService {
     private static final long UNAVAILABLE_LOG_INTERVAL = 100;
 
     private final FirewallEvaluationService evaluation;
-    private final FirewallPolicyEvaluator policy;
+    private final FirewallDecisionAssembly assembly;
     private final FirewallEnforcementSettingsService settings;
     private final FirewallViolationRecorder recorder;
     private final FirewallEnforcementProperties properties;
@@ -90,11 +108,12 @@ public class FirewallEnforcementService {
     @Autowired
     public FirewallEnforcementService(
             FirewallEvaluationService evaluation,
-            FirewallPolicyEvaluator policy,
+            FirewallDecisionAssembly assembly,
             FirewallEnforcementSettingsService settings,
             FirewallViolationRecorder recorder,
             FirewallEnforcementProperties properties) {
-        this(evaluation, policy, settings, recorder, properties, defaultExecutor(properties), true);
+        this(evaluation, assembly, settings, recorder, properties,
+                defaultExecutor(properties), true);
     }
 
     /**
@@ -104,14 +123,14 @@ public class FirewallEnforcementService {
      */
     FirewallEnforcementService(
             FirewallEvaluationService evaluation,
-            FirewallPolicyEvaluator policy,
+            FirewallDecisionAssembly assembly,
             FirewallEnforcementSettingsService settings,
             FirewallViolationRecorder recorder,
             FirewallEnforcementProperties properties,
             ExecutorService executor,
             boolean ownsExecutor) {
         this.evaluation = evaluation;
-        this.policy = policy;
+        this.assembly = assembly;
         this.settings = settings;
         this.recorder = recorder;
         this.properties = properties;
@@ -135,6 +154,26 @@ public class FirewallEnforcementService {
      */
     public FirewallEvaluation evaluate(
             UUID repositoryId, String repositoryName, String path, FirewallRequestContext context) {
+        return evaluate(repositoryId, repositoryName, null, path, context);
+    }
+
+    /**
+     * The same, told what kind of repository resolved the artifact.
+     *
+     * <p>{@code TYPOSQUAT} and {@code NAMESPACE_CONFUSION} both turn on it — the
+     * whole finding of the latter is "this internal-looking coordinate arrived
+     * from the internet" — and the router already holds the
+     * {@link de.bsnsoft.megarepo.core.repository.RepositoryConfig}, so passing it
+     * costs nothing where looking it up again would cost a query on every
+     * enforced download. A null type simply leaves those rules unable to match,
+     * which is the safe direction for a heuristic.
+     */
+    public FirewallEvaluation evaluate(
+            UUID repositoryId,
+            String repositoryName,
+            RepositoryType repositoryType,
+            String path,
+            FirewallRequestContext context) {
 
         FirewallRepositorySettings repositorySettings =
                 FirewallRepositorySettings.fallback(FirewallMode.OFF);
@@ -151,7 +190,8 @@ public class FirewallEnforcementService {
                 return notEnforcing(repositoryId, repositoryName, path, repositorySettings);
             }
 
-            FirewallEvaluation decided = decideWithin(repositoryId, repositoryName, path, repositorySettings);
+            FirewallEvaluation decided = decideWithin(
+                    repositoryId, repositoryName, repositoryType, path, repositorySettings, context);
             recordQuietly(decided, context);
             return decided;
 
@@ -176,13 +216,19 @@ public class FirewallEnforcementService {
      * does become something this method can walk away from.
      */
     private FirewallEvaluation decideWithin(
-            UUID repositoryId, String repositoryName, String path, FirewallRepositorySettings repositorySettings) {
+            UUID repositoryId,
+            String repositoryName,
+            RepositoryType repositoryType,
+            String path,
+            FirewallRepositorySettings repositorySettings,
+            FirewallRequestContext context) {
 
         Instant watermark = preExistingWatermark();
         Future<FirewallEvaluation> pending;
         try {
-            pending = executor.submit(
-                    () -> decide(repositoryId, repositoryName, path, repositorySettings, watermark));
+            pending = executor.submit(() -> decide(
+                    repositoryId, repositoryName, repositoryType, path, repositorySettings,
+                    watermark, context));
         } catch (RejectedExecutionException e) {
             return unavailable(repositoryId, repositoryName, path, repositorySettings,
                     "the evaluation backlog is full");
@@ -206,29 +252,28 @@ public class FirewallEnforcementService {
         }
     }
 
-    /** The read-only half: identify, look up, apply the policy. Runs off the request thread. */
+    /**
+     * Inspect, then hand the verdict to the shared assembly. Runs off the request
+     * thread.
+     *
+     * <p>Everything after the inspection — the quarantine short-circuit, the
+     * facts, the policy, the exemptions, the fail mode, the grandfathering rule
+     * and the queue entry — is {@link FirewallDecisionAssembly}, which is the same
+     * code the publish gate runs. This method's remaining job is what is genuinely
+     * download-shaped: reading the stored asset, and passing {@code upload=false}.
+     */
     private FirewallEvaluation decide(
             UUID repositoryId,
             String repositoryName,
+            RepositoryType repositoryType,
             String path,
             FirewallRepositorySettings repositorySettings,
-            Instant watermark) {
+            Instant watermark,
+            FirewallRequestContext context) {
 
         FirewallEvaluation inspection =
                 evaluation.inspect(repositoryId, repositoryName, path, repositorySettings, watermark);
-
-        if (inspection.outcome() != FirewallEvaluation.Outcome.MATCHED) {
-            // No component, no usable identity, or no advisory names it. None of
-            // those is a policy question with the rules this build implements —
-            // UNKNOWN_COMPONENT would be, and it is not implemented, so an
-            // unidentifiable artifact is served rather than denied on a rule
-            // nobody wrote.
-            return inspection.withDecision(FirewallDecision.allowed());
-        }
-
-        FirewallDecision decision =
-                policy.evaluate(repositorySettings, inspection.findings(), inspection.preExisting());
-        return inspection.withDecision(decision);
+        return assembly.decide(inspection, repositoryType, false, context);
     }
 
     /**
@@ -291,8 +336,15 @@ public class FirewallEnforcementService {
      * evaluation never got as far as an identity), and inventing a placeholder
      * would put rows into the component-keyed log that name no component. It is
      * logged instead, in {@link #unavailable}.
+     *
+     * <p>Neither does a decision taken by the quarantine short-circuit —
+     * {@link FirewallDecision#fromQuarantineQueue()}, which the publish gate
+     * applies for the same reason.
      */
     private void recordQuietly(FirewallEvaluation decided, FirewallRequestContext context) {
+        if (decided.decision().fromQuarantineQueue()) {
+            return;
+        }
         if (!decided.hasFindings() && decided.decision().violations().isEmpty()) {
             return;
         }

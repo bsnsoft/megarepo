@@ -102,6 +102,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Both are asserted, because an operator who reads "it blocks now" and sees a
  * cached artifact still being served needs that to be the documented behaviour
  * rather than a surprise.
+ *
+ * <h2>Why the fixture publishes while the repository is only observing</h2>
+ *
+ * Every method that needs a freshly stored, denied artifact publishes it with the
+ * master switch already on and the repository still in {@code AUDIT}, and only
+ * then moves the repository to {@code QUARANTINE}. That is not a stylistic
+ * choice. As of B1 an <em>upload</em> into an enforcing hosted repository is
+ * judged by the same policy a download is — a repository whose downloads are
+ * gated while its uploads are not has an unlocked back door — so publishing a
+ * denied component into an armed, quarantining repository is itself refused and
+ * the fixture would never get the artifact in. The two conditions the assertions
+ * actually need are that the artifact is stored <em>after</em> {@code
+ * enforcing_since} (so it is not grandfathered) and that the repository is
+ * enforcing <em>when it is downloaded</em>; publishing while observing is the
+ * only order that gives both.
  */
 @SpringBootTest(
         classes = MegaRepoApplication.class,
@@ -131,7 +146,21 @@ class FirewallSwitchEndToEndTest {
 
     private static final String FRESH_FOR_MODE_CHANGE = "2.14.3";
 
+    private static final String FRESH_FOR_BLOCK_BODY = "2.14.8";
+
+    private static final String FRESH_FOR_AUDIT = "2.14.9";
+
     private static final String ADVISORY_ID = "GHSA-jfh8-c2jp-5v3q";
+
+    /**
+     * The sentence this deployment wants appended to every refusal.
+     *
+     * <p>Configured here because the customer asked for a configurable message and
+     * the promise attached to it is that it is <em>appended</em>: no value of this
+     * property may produce a 403 that fails to say what was blocked and why.
+     */
+    private static final String CONTACT_MESSAGE =
+            "Questions about this? Ask the platform team in #platform-security.";
 
     private static final byte[] ARTIFACT = "PK pretend jar".getBytes(StandardCharsets.UTF_8);
 
@@ -175,6 +204,12 @@ class FirewallSwitchEndToEndTest {
         // second look at a path it has already seen, and every step below
         // downloads the same two paths repeatedly.
         registry.add("megarepo.firewall.audit.reevaluation-interval", () -> "0s");
+        // The deployment-configurable part of a refusal, switched on so that what
+        // an operator can add to a 403 is asserted rather than assumed. What
+        // happens when the optional parts are switched *off* is a different
+        // deployment and therefore a different class:
+        // FirewallSuppressedBlockBodyEndToEndTest.
+        registry.add("megarepo.firewall.block.contact-message", () -> CONTACT_MESSAGE);
     }
 
     @LocalServerPort private int port;
@@ -261,7 +296,14 @@ class FirewallSwitchEndToEndTest {
         assertThat(effectiveState()).isEqualTo("BLOCKING");
 
         // ── 3. The very next download of newly stored content is refused ─────
+        // Published while the repository is observing and then armed again — see
+        // the class comment: with the repository already enforcing, the PUT would
+        // be refused by the same policy and this fixture would silently never
+        // store the artifact it is about to assert on.
+        setRepositoryMode(FirewallMode.AUDIT, null);
         upload(FRESH);
+        givenQuarantineThroughTheApi();
+
         ResponseEntity<String> refused = download(FRESH);
 
         assertThat(refused.getStatusCode())
@@ -318,10 +360,9 @@ class FirewallSwitchEndToEndTest {
     @Test
     @DisplayName("moving a repository out of QUARANTINE through the API serves it again at once")
     void theRepositoryModeTakesEffectImmediately() {
+        givenPublishedUnderAnArmedSwitch(FRESH_FOR_MODE_CHANGE);
         givenQuarantineThroughTheApi();
-        assertThat(setEnforcement(true, "ENABLE ENFORCEMENT").getStatusCode()).isEqualTo(HttpStatus.OK);
 
-        upload(FRESH_FOR_MODE_CHANGE);
         assertThat(download(FRESH_FOR_MODE_CHANGE).getStatusCode())
                 .as("armed instance, QUARANTINE repository, critical advisory")
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -339,6 +380,97 @@ class FirewallSwitchEndToEndTest {
                 .as("the master switch is still on; this repository simply no longer asks "
                         + "to be enforced, and that has to apply to the next request")
                 .isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    @DisplayName("AUDIT is behaviour-neutral end to end: an armed instance still serves, and "
+            + "still records")
+    void auditModeChangesNothingThatAClientCanSee() {
+        ResponseEntity<FirewallRepositoryStateXO> observing = setRepositoryMode(FirewallMode.AUDIT, null);
+        assertThat(observing.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(setEnforcement(true, "ENABLE ENFORCEMENT").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(effectiveState())
+                .as("armed instance, observing repository — the state an installation sits in "
+                        + "for as long as it takes to trust the findings")
+                .isEqualTo("OBSERVING");
+
+        // Both halves of the promise, in the order a consumer meets them.
+        upload(FRESH_FOR_AUDIT);
+        ResponseEntity<String> served = download(FRESH_FOR_AUDIT);
+
+        assertThat(served.getStatusCode())
+                .as("a component with a CVSS 10.0 advisory against it, in an armed instance, "
+                        + "served — because this repository has not asked to be enforced. "
+                        + "That is the whole meaning of AUDIT and the reason an operator dares "
+                        + "switch the firewall on at all")
+                .isEqualTo(HttpStatus.OK);
+        assertThat(served.getHeaders().getFirst("X-MegaRepo-Firewall"))
+                .as("nothing about an audited download may look like a refusal to a client")
+                .isNull();
+
+        FirewallViolationEntity recorded = awaitViolationFor(FRESH_FOR_AUDIT, "audit");
+        assertThat(recorded.getRequestContext())
+                .as("observing is not the same as ignoring: the finding is on file, which is "
+                        + "the evidence the decision to arm is taken on")
+                .containsEntry("enforced", false)
+                .containsEntry("mode", FirewallMode.AUDIT.name());
+        assertThat(recorded.getAdvisoryIds()).contains(ADVISORY_ID);
+    }
+
+    @Test
+    @DisplayName("the 403 names the policy, links the advisories, says how to ask for an "
+            + "exemption and carries the deployment's own message")
+    void theBlockBodyTellsTheDeveloperWhatToDoNext() {
+        givenPublishedUnderAnArmedSwitch(FRESH_FOR_BLOCK_BODY);
+        givenQuarantineThroughTheApi();
+
+        ResponseEntity<String> refused = download(FRESH_FOR_BLOCK_BODY);
+        assertThat(refused.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        String body = refused.getBody();
+        assertThat(body)
+                .as("what Phase 1 already promised, still promised")
+                .contains("MegaRepo repository firewall")
+                .contains(REPOSITORY)
+                .contains("log4j-core@" + FRESH_FOR_BLOCK_BODY)
+                .contains("CVSS_THRESHOLD")
+                .contains(ADVISORY_ID);
+        assertThat(body)
+                .as("the operator being asked about this has several policies; the developer "
+                        + "has to be able to say which one refused them")
+                .contains("Policy     : Default");
+        assertThat(body)
+                .as("the id answers 'what is wrong', the link answers 'is it wrong for me'")
+                .contains("https://github.com/advisories/" + ADVISORY_ID);
+        assertThat(body)
+                .as("the next step after a block should be a request, not a message to "
+                        + "whoever owns the repository manager — so the body carries both the "
+                        + "form a human clicks and the call a script makes")
+                .contains("To ask for an exemption")
+                .contains("/admin/firewall/exemptions/new?component=")
+                .contains("POST http://localhost:" + port + "/api/v1/firewall/exemptions")
+                .contains("ruleType=CVSS_THRESHOLD")
+                .contains("repositoryId=" + repositoryId);
+        assertThat(body)
+                .as("appended, never substituted: the deployment's sentence is the last line "
+                        + "and everything above it still says what was blocked and why")
+                .endsWith(CONTACT_MESSAGE + "\n");
+
+        assertThat(refused.getHeaders().getFirst("X-MegaRepo-Firewall-Exemption-Request"))
+                .as("NuGet's client shows neither body reliably, so the link is a header too")
+                .contains("/admin/firewall/exemptions/new?component=");
+
+        // The same facts in the shape npm and friends parse.
+        ResponseEntity<String> asJson = download(FRESH_FOR_BLOCK_BODY, MediaType.APPLICATION_JSON_VALUE);
+        assertThat(asJson.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(asJson.getBody())
+                .contains("\"policy\":\"Default\"")
+                .contains("\"advisoryLinks\":{\"" + ADVISORY_ID
+                        + "\":\"https://github.com/advisories/" + ADVISORY_ID + "\"}")
+                .contains("\"exemptionRequest\":{")
+                .contains("\"ruleType\":\"CVSS_THRESHOLD\"")
+                .contains("\"repositoryId\":\"" + repositoryId + "\"")
+                .contains("\"contact\":\"" + CONTACT_MESSAGE + "\"");
     }
 
     // ── The administration API, over HTTP, as an nx-admin ────────────────────
@@ -383,6 +515,20 @@ class FirewallSwitchEndToEndTest {
                 .orElseThrow(() -> new AssertionError(REPOSITORY + " missing from the firewall status"))
                 .effectiveState()
                 .name();
+    }
+
+    /**
+     * An armed instance holding a freshly published, denied artifact.
+     *
+     * <p>The publish happens while the repository is still observing, and the
+     * order is load-bearing — see the class comment. The caller moves the
+     * repository to QUARANTINE afterwards, which is the state its assertions are
+     * about.
+     */
+    private void givenPublishedUnderAnArmedSwitch(String version) {
+        assertThat(setRepositoryMode(FirewallMode.AUDIT, null).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(setEnforcement(true, "ENABLE ENFORCEMENT").getStatusCode()).isEqualTo(HttpStatus.OK);
+        upload(version);
     }
 
     /** Arms the repository itself, through the API, phrase included. */
@@ -498,25 +644,30 @@ class FirewallSwitchEndToEndTest {
      * client must not wait for the audit trail.
      */
     private FirewallViolationEntity awaitEnforcementViolationFor(String version) {
+        return awaitViolationFor(version, "enforcement");
+    }
+
+    /** The same, for either writer — {@code audit} is the observation path's phase. */
+    private FirewallViolationEntity awaitViolationFor(String version, String phase) {
         long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
         while (System.nanoTime() < deadline) {
-            List<FirewallViolationEntity> rows = enforcementRowsFor(version);
+            List<FirewallViolationEntity> rows = rowsFor(version, phase);
             if (!rows.isEmpty()) {
                 return rows.get(0);
             }
             sleep();
         }
-        throw new AssertionError("The enforcement path recorded nothing for version " + version
+        throw new AssertionError("The " + phase + " path recorded nothing for version " + version
                 + "; rows: " + violations.findAll().stream()
                         .map(row -> row.getPurl() + " " + row.getRequestContext().get("phase"))
                         .toList());
     }
 
-    private List<FirewallViolationEntity> enforcementRowsFor(String version) {
+    private List<FirewallViolationEntity> rowsFor(String version, String phase) {
         return violations.findAll().stream()
                 .filter(row -> row.getPurl() != null && row.getPurl().endsWith("@" + version))
                 .filter(row -> row.getRequestContext() != null
-                        && "enforcement".equals(row.getRequestContext().get("phase")))
+                        && phase.equals(row.getRequestContext().get("phase")))
                 .toList();
     }
 
