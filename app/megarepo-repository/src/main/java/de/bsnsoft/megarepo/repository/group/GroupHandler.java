@@ -102,15 +102,31 @@ public class GroupHandler {
      * Handles PUT requests for group repositories by delegating to the writable member.
      */
     public FormatResponse handlePut(RepositoryConfig groupRepo, String path, HttpServletRequest request) {
+        return handlePutVia(groupRepo, path, request).response();
+    }
+
+    /**
+     * The same, saying which member stored it.
+     *
+     * <p>The firewall needs to know: an upload published through a group lands in
+     * exactly one member, and that member's mode, policy and fail mode are what
+     * govern it — the same rule the GET path already follows. It is also the
+     * repository a refused upload has to be retracted from, and retracting from
+     * the group would delete nothing (osTicket #155155).
+     */
+    public GroupResponse handlePutVia(
+            RepositoryConfig groupRepo, String path, HttpServletRequest request) {
+
         Optional<RepositoryConfig> writableMember = groupMemberResolver.getWritableMember(groupRepo);
         if (writableMember.isEmpty()) {
-            return new ErrorResponse(405, "Group repository '%s' has no writable member".formatted(groupRepo.name()));
+            return GroupResponse.ofGroup(new ErrorResponse(
+                    405, "Group repository '%s' has no writable member".formatted(groupRepo.name())));
         }
 
         RepositoryConfig member = writableMember.get();
         FormatPlugin plugin = formatRegistry.getPlugin(member.format());
         FormatRequestHandler handler = plugin.getRequestHandler();
-        return handler.handleHostedPut(member, path, request);
+        return new GroupResponse(handler.handleHostedPut(member, path, request), member);
     }
 
     /**
