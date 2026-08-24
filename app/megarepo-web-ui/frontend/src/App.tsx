@@ -60,19 +60,22 @@ export default function App() {
               <Route path="/search" element={<SearchPage />} />
               <Route path="/upload" element={<UploadPage />} />
 
-              {/* Administration - Repository */}
+              {/*
+                Administration - Repository, open to any logged-in account.
+
+                Reading, creating and updating a repository are deliberately
+                not administrator-only on the server: the documented
+                provisioning recipes do all three with a plain account. Only
+                DELETE is closed, so only the delete controls are hidden —
+                inside the pages, not by taking the pages away.
+              */}
               <Route path="/admin/repositories" element={<RepositoryListPage />} />
               <Route path="/admin/repositories/create" element={<RepositoryCreatePage />} />
               <Route path="/admin/repositories/:name" element={<RepositoryDetailPage />} />
               <Route path="/admin/repositories/:name/edit" element={<RepositoryEditPage />} />
-              <Route path="/admin/blobstores" element={<BlobStoresPage />} />
-              <Route path="/admin/cleanup" element={<CachePage />} />
-              <Route path="/admin/routing-rules" element={<RoutingRulesPage />} />
 
               {/* Administration - System, open to any logged-in account */}
               <Route path="/admin/status" element={<StatusPage />} />
-              <Route path="/admin/tasks" element={<TasksPage />} />
-              <Route path="/admin/audit" element={<AuditLogPage />} />
 
               {/*
                 Administrator-only screens. Grouping them under one guard keeps
@@ -99,6 +102,19 @@ export default function App() {
                 {/* System */}
                 <Route path="/admin/http-proxy" element={<HttpProxyPage />} />
                 <Route path="/admin/license" element={<LicensePage />} />
+
+                {/*
+                  Operational administration. Each of these pages has one
+                  subject and one endpoint prefix, and the server closed the
+                  prefix whole — reads included. There is nothing on them a
+                  non-administrator could still do, so the guard takes the
+                  route rather than dimming half the screen.
+                */}
+                <Route path="/admin/tasks" element={<TasksPage />} />
+                <Route path="/admin/blobstores" element={<BlobStoresPage />} />
+                <Route path="/admin/cleanup" element={<CachePage />} />
+                <Route path="/admin/routing-rules" element={<RoutingRulesPage />} />
+                <Route path="/admin/audit" element={<AuditLogPage />} />
               </Route>
 
               {/* Account */}

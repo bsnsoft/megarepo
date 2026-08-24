@@ -7,6 +7,7 @@ import TypeBadge from '../../components/TypeBadge';
 import StatusDot from '../../components/StatusDot';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../auth/AuthContext';
 import type { Repository } from '../../types/api';
 
 function GroupMembersSection({ repo }: { repo: Repository }) {
@@ -175,6 +176,13 @@ export default function RepositoryDetailPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  /**
+   * Only Delete is administrator-only here — `DELETE /api/v1/repositories/*`.
+   * Reading the repository, editing it and rewriting a group's members are
+   * `authenticated()` and stay where they are. As everywhere on this side of
+   * the wire the hiding is cosmetic; the server enforces the rule itself.
+   */
+  const { isAdmin } = useAuth();
 
   const [repo, setRepo] = useState<Repository | null>(null);
   const [loading, setLoading] = useState(true);
@@ -237,12 +245,14 @@ export default function RepositoryDetailPage() {
           >
             Edit
           </button>
-          <button
-            className="inline-flex items-center px-4 py-2 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-sm font-medium rounded-md transition-colors"
-            onClick={() => setShowDelete(true)}
-          >
-            Delete
-          </button>
+          {isAdmin && (
+            <button
+              className="inline-flex items-center px-4 py-2 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-sm font-medium rounded-md transition-colors"
+              onClick={() => setShowDelete(true)}
+            >
+              Delete
+            </button>
+          )}
         </div>
       </div>
 

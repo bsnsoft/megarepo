@@ -11,6 +11,7 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import NexusMigrationDialog from '../../components/NexusMigrationDialog';
 import ImportPresetDialog from '../../components/ImportPresetDialog';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../auth/AuthContext';
 import type { Repository } from '../../types/api';
 
 type RepoRow = Repository & Record<string, unknown>;
@@ -54,6 +55,19 @@ function formatBytes(bytes: number): string {
 export default function RepositoryListPage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  /**
+   * The page itself is open on purpose: `GET /api/v1/repositories` and
+   * `POST /api/v1/repositories` are `authenticated()`, because the documented
+   * provisioning recipes create repositories with a plain account. Four
+   * controls on it are not, and each maps to one rule in `SecurityConfig`:
+   * the row's Delete to `DELETE /api/v1/repositories/*`, and the migration,
+   * import and export buttons to `/api/v1/admin/**`.
+   *
+   * Hiding them is presentation. The server refuses all four on its own; this
+   * only stops a non-administrator from being shown a control that cannot work
+   * for them.
+   */
+  const { isAdmin } = useAuth();
   const [repos, setRepos] = useState<RepoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -182,25 +196,31 @@ export default function RepositoryListPage() {
           </span>
         ),
       },
-      {
-        key: '_actions',
-        label: '',
-        width: '60px',
-        render: (row) => (
-          <button
-            className="inline-flex items-center px-3 py-1 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-xs font-medium rounded-md transition-colors"
-            title="Delete repository"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDeleteTarget(row);
-            }}
-          >
-            Delete
-          </button>
-        ),
-      },
+      // Dropped whole rather than rendered empty: an actions column with
+      // nothing in it is a stripe of dead space on every row.
+      ...(isAdmin
+        ? [
+            {
+              key: '_actions',
+              label: '',
+              width: '60px',
+              render: (row: RepoRow) => (
+                <button
+                  className="inline-flex items-center px-3 py-1 bg-white border border-gray-200 hover:bg-red-50 text-red-600 text-xs font-medium rounded-md transition-colors"
+                  title="Delete repository"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(row);
+                  }}
+                >
+                  Delete
+                </button>
+              ),
+            },
+          ]
+        : []),
     ],
-    [],
+    [isAdmin],
   );
 
   if (loading) {
@@ -236,30 +256,39 @@ export default function RepositoryListPage() {
           emptyMessage="No repositories configured yet"
           actions={
             <div className="flex gap-2">
-              <button
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
-                onClick={() => setMigrateOpen(true)}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Bootstrap from Nexus
-              </button>
-              <button
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
-                onClick={() => setImportOpen(true)}
-              >
-                Import Preset
-              </button>
-              <button
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
-                onClick={handleExport}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12" />
-                </svg>
-                Export YAML
-              </button>
+              {/*
+                All three drive /api/v1/admin/** — the Nexus migration runner,
+                the YAML import and the YAML export — which is nx-admin only.
+                Create Repository below is not, and stays.
+              */}
+              {isAdmin && (
+                <>
+                  <button
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
+                    onClick={() => setMigrateOpen(true)}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Bootstrap from Nexus
+                  </button>
+                  <button
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
+                    onClick={() => setImportOpen(true)}
+                  >
+                    Import Preset
+                  </button>
+                  <button
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-md transition-colors"
+                    onClick={handleExport}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m4-8l-4-4m0 0l-4 4m4-4v12" />
+                    </svg>
+                    Export YAML
+                  </button>
+                </>
+              )}
               <button
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors"
                 onClick={() => navigate('/admin/repositories/create')}
