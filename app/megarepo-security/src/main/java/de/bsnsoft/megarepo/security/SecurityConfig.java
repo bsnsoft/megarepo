@@ -46,6 +46,35 @@ public class SecurityConfig {
     /** Role required for {@link #FIREWALL_ADMIN_PATH_PATTERN}, without the {@code ROLE_} prefix. */
     public static final String FIREWALL_ADMIN_ROLE = "nx-admin";
 
+    /**
+     * Exemption management, restricted to {@code nx-admin}.
+     *
+     * <p>Everything about an exemption except filing one: the list enumerates
+     * what an organisation has decided to let past its own firewall, and
+     * approving is the act that lets it past. Note that {@code /**} matches the
+     * collection path itself, so a {@code GET} on the collection is covered.
+     */
+    public static final String FIREWALL_EXEMPTION_PATH_PATTERN = "/api/v1/firewall/exemptions/**";
+
+    /**
+     * Filing an exemption request — {@code POST} on the collection, and the one
+     * verb on that prefix that is merely {@code authenticated()}.
+     *
+     * <p>The customer's requirement is that a developer who hits a firewall 403
+     * can ask for an exemption from the block page instead of opening a ticket;
+     * an exemption process that starts with a support ticket is one people route
+     * around by copying the artifact somewhere else. A request is safe to hand
+     * out because it changes nothing: it is created {@code REQUESTED} and lets no
+     * download through until an approver — who does need the role above — acts.
+     *
+     * <p>Whether a non-administrator may file one at all is
+     * {@code megarepo.firewall.exemption.self-service-requests}, enforced in
+     * {@code FirewallExemptionController}: it is a runtime property, and a filter
+     * chain that has to be rebuilt to reflect configuration is a chain that will
+     * not be.
+     */
+    public static final String FIREWALL_EXEMPTION_REQUEST_PATH = "/api/v1/firewall/exemptions";
+
     @Bean
     public SecurityFilterChain filterChain(
             HttpSecurity http,
@@ -97,6 +126,12 @@ public class SecurityConfig {
                         // rule belongs in the chain. Role ids reach the security
                         // context as ROLE_<id>, hence "nx-admin" from V2's seed.
                         .requestMatchers(FIREWALL_ADMIN_PATH_PATTERN)
+                        .hasRole(FIREWALL_ADMIN_ROLE)
+                        // Order is the rule here: the narrow POST must be stated
+                        // before the pattern that would otherwise swallow it.
+                        .requestMatchers(HttpMethod.POST, FIREWALL_EXEMPTION_REQUEST_PATH)
+                        .authenticated()
+                        .requestMatchers(FIREWALL_EXEMPTION_PATH_PATTERN)
                         .hasRole(FIREWALL_ADMIN_ROLE)
                         .requestMatchers("/actuator/health", "/actuator/info")
                         .permitAll()
