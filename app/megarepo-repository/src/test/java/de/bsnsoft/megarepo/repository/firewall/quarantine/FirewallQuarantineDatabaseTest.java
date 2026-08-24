@@ -463,6 +463,14 @@ class FirewallQuarantineDatabaseTest {
                 @ComponentScan.Filter(
                         type = FilterType.REGEX,
                         pattern = "de\\.bsnsoft\\.megarepo\\.repository\\.advisory\\.(osv|ghsa)\\..*"),
+                // The sibling firewall packages are other work packages' beans: the
+                // real rules would collide with MinAgeStub (two rules claiming
+                // MIN_AGE), and facts/exemption/corpus are optional collaborators
+                // this context neither needs nor satisfies.
+                @ComponentScan.Filter(
+                        type = FilterType.REGEX,
+                        pattern =
+                                "de\\.bsnsoft\\.megarepo\\.repository\\.firewall\\.(rule\\.impl|rule\\.corpus|facts|exemption)\\..*"),
                 @ComponentScan.Filter(type = FilterType.REGEX, pattern = ".*Test\\$TestConfig")
             })
     // TransactionAutoConfiguration, unlike the sibling firewall database tests:
