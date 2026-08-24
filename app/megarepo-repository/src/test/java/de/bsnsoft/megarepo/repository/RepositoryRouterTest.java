@@ -14,10 +14,12 @@ import de.bsnsoft.megarepo.core.firewall.FirewallRuleType;
 import de.bsnsoft.megarepo.repository.firewall.FirewallDecision;
 import de.bsnsoft.megarepo.repository.firewall.FirewallDownloadObserver;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementService;
+import de.bsnsoft.megarepo.repository.firewall.FirewallBlockProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEvaluation;
 import de.bsnsoft.megarepo.repository.firewall.FirewallRepositorySettings;
 import de.bsnsoft.megarepo.repository.firewall.FirewallRequestContext;
 import de.bsnsoft.megarepo.repository.firewall.FirewallRuleViolation;
+import de.bsnsoft.megarepo.repository.firewall.FirewallUploadGate;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
 import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.ServletOutputStream;
@@ -89,6 +91,9 @@ class RepositoryRouterTest {
     private FirewallEnforcementService firewallEnforcementService;
 
     @Mock
+    private FirewallUploadGate firewallUploadGate;
+
+    @Mock
     private HttpServletRequest request;
 
     @Mock
@@ -102,10 +107,17 @@ class RepositoryRouterTest {
                 .thenReturn(NvdFirewallService.CheckResult.allowed());
         // The shipped default: the enforcement master switch is off, so the
         // enforcement path declines to decide and the observation path runs.
+        // The router calls the overload that carries the repository type, so
+        // that is the one a default has to be stubbed for — a stub on the
+        // four-argument form would leave the real call answering null.
         Mockito.lenient().when(firewallEnforcementService.evaluate(
-                        Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
-                .thenAnswer(invocation -> notEnforcing(invocation.getArgument(2)));
-        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster, nvdFirewallService, firewallDownloadObserver, firewallEnforcementService);
+                        Mockito.any(), Mockito.anyString(), Mockito.any(), Mockito.anyString(),
+                        Mockito.any()))
+                .thenAnswer(invocation -> notEnforcing(invocation.getArgument(3)));
+        Mockito.lenient().when(firewallUploadGate.evaluate(
+                        Mockito.any(), Mockito.anyString(), Mockito.any()))
+                .thenAnswer(invocation -> notEnforcing(invocation.getArgument(1)));
+        router = new RepositoryRouter(repositoryConfigService, formatRegistry, groupHandler, auditService, activityBroadcaster, nvdFirewallService, firewallDownloadObserver, firewallEnforcementService, firewallUploadGate, FirewallBlockProperties.defaults());
     }
 
     @AfterEach
@@ -254,7 +266,8 @@ class RepositoryRouterTest {
         var bodyWriter = new java.io.StringWriter();
         when(response.getWriter()).thenReturn(new java.io.PrintWriter(bodyWriter));
         when(firewallEnforcementService.evaluate(
-                        Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+                        Mockito.any(), Mockito.anyString(), Mockito.any(), Mockito.anyString(),
+                        Mockito.any()))
                 .thenReturn(blockedBy(
                         "com/example/artifact.jar",
                         new FirewallRuleViolation(
@@ -291,7 +304,8 @@ class RepositoryRouterTest {
         var outputBuffer = new ByteArrayOutputStream();
         givenServedArtifact(repo, data, outputBuffer);
         when(firewallEnforcementService.evaluate(
-                        Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+                        Mockito.any(), Mockito.anyString(), Mockito.any(), Mockito.anyString(),
+                        Mockito.any()))
                 .thenReturn(new FirewallEvaluation(
                         repo.id(), "my-repo", "com/example/artifact.jar",
                         new FirewallRepositorySettings(
@@ -321,7 +335,8 @@ class RepositoryRouterTest {
         var outputBuffer = new ByteArrayOutputStream();
         givenServedArtifact(repo, data, outputBuffer);
         when(firewallEnforcementService.evaluate(
-                        Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+                        Mockito.any(), Mockito.anyString(), Mockito.any(), Mockito.anyString(),
+                        Mockito.any()))
                 .thenThrow(new RuntimeException("firewall is broken"));
 
         assertDoesNotThrow(() -> router.handleGet("my-repo", request, response));
@@ -533,9 +548,9 @@ class RepositoryRouterTest {
 
         // Enforcement asked about the member, never about the group.
         verify(firewallEnforcementService).evaluate(
-                eq(member.id()), eq("maven-central"), eq("some/path"), any());
+                eq(member.id()), eq("maven-central"), eq(RepositoryType.PROXY), eq("some/path"), any());
         verify(firewallEnforcementService, never()).evaluate(
-                eq(group.id()), any(), any(), any());
+                eq(group.id()), any(), any(), any(), any());
 
         // And so did the observation path, with the group recorded as the route.
         var context = ArgumentCaptor.forClass(FirewallRequestContext.class);

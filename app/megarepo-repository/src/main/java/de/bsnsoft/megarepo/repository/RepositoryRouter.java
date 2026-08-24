@@ -13,11 +13,13 @@ import de.bsnsoft.megarepo.core.format.FormatResponse.RedirectResponse;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfig;
 import de.bsnsoft.megarepo.core.repository.RepositoryConfigService;
 import de.bsnsoft.megarepo.core.repository.RepositoryType;
+import de.bsnsoft.megarepo.repository.firewall.FirewallBlockProperties;
 import de.bsnsoft.megarepo.repository.firewall.FirewallBlockResponse;
 import de.bsnsoft.megarepo.repository.firewall.FirewallDownloadObserver;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEnforcementService;
 import de.bsnsoft.megarepo.repository.firewall.FirewallEvaluation;
 import de.bsnsoft.megarepo.repository.firewall.FirewallRequestContext;
+import de.bsnsoft.megarepo.repository.firewall.FirewallUploadGate;
 import de.bsnsoft.megarepo.repository.group.GroupHandler;
 import de.bsnsoft.megarepo.repository.nvd.NvdFirewallService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -56,6 +58,8 @@ public class RepositoryRouter {
     private final NvdFirewallService nvdFirewallService;
     private final FirewallDownloadObserver firewallDownloadObserver;
     private final FirewallEnforcementService firewallEnforcementService;
+    private final FirewallUploadGate firewallUploadGate;
+    private final FirewallBlockProperties firewallBlockProperties;
 
     public RepositoryRouter(
             RepositoryConfigService repositoryConfigService,
@@ -65,7 +69,9 @@ public class RepositoryRouter {
             ActivityBroadcaster activityBroadcaster,
             NvdFirewallService nvdFirewallService,
             FirewallDownloadObserver firewallDownloadObserver,
-            FirewallEnforcementService firewallEnforcementService) {
+            FirewallEnforcementService firewallEnforcementService,
+            FirewallUploadGate firewallUploadGate,
+            FirewallBlockProperties firewallBlockProperties) {
         this.repositoryConfigService = repositoryConfigService;
         this.formatRegistry = formatRegistry;
         this.groupHandler = groupHandler;
@@ -74,6 +80,8 @@ public class RepositoryRouter {
         this.nvdFirewallService = nvdFirewallService;
         this.firewallDownloadObserver = firewallDownloadObserver;
         this.firewallEnforcementService = firewallEnforcementService;
+        this.firewallUploadGate = firewallUploadGate;
+        this.firewallBlockProperties = firewallBlockProperties;
     }
 
     @RequestMapping(
@@ -170,10 +178,16 @@ public class RepositoryRouter {
             // with that member's mode, policy and fail mode. The group is a
             // routing table: its own firewall configuration does not enter into
             // it, and cannot — the component is not in the group.
+            //
+            // The member's *type* travels with the call: TYPOSQUAT and
+            // NAMESPACE_CONFUSION both hinge on whether the artifact came from
+            // upstream, and the router already holds the RepositoryConfig, so
+            // passing it costs nothing where re-reading it would cost a query on
+            // every enforced download.
             FirewallEvaluation verdict;
             try {
                 verdict = firewallEnforcementService.evaluate(
-                        resolvedRepo.id(), resolvedRepo.name(), path,
+                        resolvedRepo.id(), resolvedRepo.name(), resolvedRepo.type(), path,
                         new FirewallRequestContext(
                                 currentUser, clientIp(request), path, request.getMethod(), viaGroup));
             } catch (RuntimeException e) {
@@ -185,7 +199,7 @@ public class RepositoryRouter {
                 firewallAlreadyEvaluated = verdict.enforcementEvaluated();
                 if (verdict.blocked()) {
                     try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
-                    writeFirewallBlockResponse(request, response, verdict, viaGroup);
+                    writeFirewallBlockResponse(request, response, verdict, viaGroup, false);
                     return;
                 }
             }
@@ -275,13 +289,62 @@ public class RepositoryRouter {
         }
 
         FormatResponse formatResponse;
+        // The repository that actually stored the artifact. Through a group that
+        // is the writable member, and it is the member's firewall configuration
+        // that governs the publish — the same rule the GET path follows, and the
+        // only repository a refused upload can be retracted from.
+        RepositoryConfig storedIn = repo;
+        String viaGroup = null;
         if (repo.type() == RepositoryType.GROUP) {
-            formatResponse = groupHandler.handlePut(repo, path, request);
+            GroupHandler.GroupResponse group = groupHandler.handlePutVia(repo, path, request);
+            formatResponse = group.response();
+            if (group.servedBy() != null) {
+                storedIn = group.servedBy();
+                viaGroup = repo.name();
+            }
         } else {
             FormatPlugin plugin = formatRegistry.getPlugin(repo.format());
             FormatRequestHandler handler = plugin.getRequestHandler();
             formatResponse = handler.handleHostedPut(repo, path, request);
         }
+
+        // Repository firewall enforcement for uploads (osTicket #155155).
+        //
+        // Phase 1 never looked at a publish, and a repository whose downloads are
+        // gated while its uploads are not is a repository with an unlocked back
+        // door: what a developer publishes into a hosted repository is what every
+        // consumer of it then pulls.
+        //
+        // It runs *after* the write because the component only exists once the
+        // format handler has extracted its coordinates — the layout grammar for
+        // that lives in the format module, and re-implementing it here to decide
+        // earlier is the duplication that eventually disagrees with the real one.
+        // So a refusal retracts what was written, through the same handler's
+        // delete, before any response is sent. See FirewallUploadGate.
+        //
+        // A no-op unless the master switch is on and the storing repository is in
+        // QUARANTINE mode; and never throwing, because a firewall fault must cost
+        // a developer their release no more than it costs a consumer an artifact.
+        if (formatResponse instanceof CreatedResponse) {
+            FirewallEvaluation verdict;
+            try {
+                verdict = firewallUploadGate.evaluate(
+                        storedIn, path,
+                        new FirewallRequestContext(
+                                currentUser(request), clientIp(request), path,
+                                request.getMethod(), viaGroup));
+            } catch (RuntimeException e) {
+                log.warn("Repository firewall upload evaluation failed for {}/{} — the upload was kept",
+                        storedIn.name(), path, e);
+                verdict = null;
+            }
+            if (verdict != null && verdict.blocked()) {
+                retractRefusedUpload(storedIn, path, request);
+                writeFirewallBlockResponse(request, response, verdict, viaGroup, true);
+                return;
+            }
+        }
+
         writeResponse(formatResponse, request, response);
 
         if (formatResponse instanceof CreatedResponse) {
@@ -290,6 +353,34 @@ public class RepositoryRouter {
             auditService.logUpload(user, repoName, path, repo.format(), size, clientIp(request));
             activityBroadcaster.broadcast(new ActivityEvent(
                     Instant.now(), user, "UPLOAD", repoName, path, repo.format(), size, 0L, null));
+        }
+    }
+
+    /**
+     * Removes the artifact a refused upload had already written.
+     *
+     * <p>Through the format handler's own delete, so the blob and the asset row go
+     * the same way they would for a real {@code DELETE} — a router that unlinked
+     * the row itself would leave orphaned blobs behind on every refusal.
+     *
+     * <p>A failure here is logged and does not change the verdict: the upload is
+     * refused either way, and telling the publisher "accepted" because the cleanup
+     * failed would be the worse of the two wrong answers. What is left behind is
+     * an artifact nobody can download — the same firewall that refused the publish
+     * refuses the fetch.
+     */
+    private void retractRefusedUpload(
+            RepositoryConfig storedIn, String path, HttpServletRequest request) {
+        try {
+            FormatPlugin plugin = formatRegistry.getPlugin(storedIn.format());
+            plugin.getRequestHandler().handleHostedDelete(storedIn, path, request);
+            log.info("Repository firewall refused the upload of {}/{}; the stored artifact was removed",
+                    storedIn.name(), path);
+        } catch (RuntimeException e) {
+            log.warn("Repository firewall refused the upload of {}/{} but could not remove the "
+                            + "artifact it had already stored — it stays unservable, but an operator "
+                            + "should clean it up",
+                    storedIn.name(), path, e);
         }
     }
 
@@ -586,20 +677,53 @@ public class RepositoryRouter {
             HttpServletRequest request,
             HttpServletResponse response,
             FirewallEvaluation verdict,
-            String viaGroup)
+            String viaGroup,
+            boolean upload)
             throws IOException {
+        FirewallBlockResponse.Context context = new FirewallBlockResponse.Context(
+                viaGroup, externalBaseUrl(request), firewallBlockProperties, upload);
         boolean json = FirewallBlockResponse.prefersJson(request.getHeader("Accept"));
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(FirewallBlockResponse.contentType(json));
-        FirewallBlockResponse.headers(verdict, viaGroup).forEach(response::setHeader);
-        String body = FirewallBlockResponse.body(verdict, json, viaGroup);
+        FirewallBlockResponse.headers(verdict, context).forEach(response::setHeader);
+        String body = FirewallBlockResponse.body(verdict, json, context);
         // HEAD carries the headers but no body, same as any other response.
         if (!"HEAD".equalsIgnoreCase(request.getMethod())) {
             response.getWriter().write(body);
             response.getWriter().flush();
         }
         log.info("Repository firewall denied {}: {}",
-                verdict.path(), FirewallBlockResponse.summary(verdict, viaGroup));
+                verdict.path(), FirewallBlockResponse.summary(verdict, context));
+    }
+
+    /**
+     * The base URL to build the block body's exemption link from, as this request
+     * saw it.
+     *
+     * <p>Only used when {@code megarepo.firewall.block.base-url} is not pinned.
+     * Behind a proxy that rewrites {@code Host} this is wrong, which is exactly why
+     * the property exists — but for a plain deployment it is right and needs no
+     * configuration, and a link that is occasionally host-wrong still beats no link
+     * at all.
+     */
+    private static String externalBaseUrl(HttpServletRequest request) {
+        try {
+            StringBuilder base = new StringBuilder()
+                    .append(request.getScheme()).append("://").append(request.getServerName());
+            int port = request.getServerPort();
+            boolean defaultPort = ("http".equals(request.getScheme()) && port == 80)
+                    || ("https".equals(request.getScheme()) && port == 443);
+            if (!defaultPort && port > 0) {
+                base.append(':').append(port);
+            }
+            String contextPath = request.getContextPath();
+            if (contextPath != null && !contextPath.isBlank() && !"/".equals(contextPath)) {
+                base.append(contextPath);
+            }
+            return base.toString();
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     private void writeNvdBlockResponse(

@@ -233,8 +233,9 @@ public class FirewallViolationRecorder {
         }
 
         // What happened, not what the rule wanted: a BLOCK rule whose component
-        // was grandfathered in was served, and the row has to say so.
-        boolean denied = decision.blocked() && violation.blocks();
+        // was grandfathered in, or whose finding an exemption covers, was served,
+        // and the row has to say so.
+        boolean denied = decision.blocked() && violation.denies();
         FirewallAction recorded = denied ? FirewallAction.BLOCK : FirewallAction.WARN;
 
         Map<String, Object> header = new LinkedHashMap<>();
@@ -246,10 +247,37 @@ public class FirewallViolationRecorder {
         header.put("ruleAction", violation.action().name());
         header.put("rule", violation.ruleType().name());
         header.put("ruleReason", violation.reason());
+        // "This rule matched" and "this rule could not tell" are different facts
+        // about the firewall's health, and an operator has to be able to query
+        // for the second one rather than grep the reason text for a phrase.
+        header.put("undecided", violation.undecided());
         header.put("preExisting", evaluation.preExisting());
         header.put("failModeApplied", decision.failModeApplied());
         if (decision.policyName() != null) {
             header.put("policy", decision.policyName());
+        }
+        // Which exemption let a blocking rule through. Without it the log shows a
+        // BLOCK rule that matched next to a download that went out, and nothing
+        // connecting the two — the exemption table cannot be joined to this row
+        // by anything but a timestamp guess.
+        header.put("exempted", violation.exempted());
+        if (violation.exemptionId() != null) {
+            header.put("exemptionId", violation.exemptionId().toString());
+        }
+        // And whether the refusal put the component in the queue rather than
+        // turning it away, which is the difference between "wait" and "act".
+        header.put("quarantined", decision.held());
+        FirewallDecision.Hold hold = decision.hold();
+        if (hold != null) {
+            if (hold.quarantineId() != null) {
+                header.put("quarantineId", hold.quarantineId().toString());
+            }
+            if (hold.reason() != null) {
+                header.put("quarantineReason", hold.reason().name());
+            }
+            if (hold.nextEvaluationAt() != null) {
+                header.put("nextEvaluationAt", hold.nextEvaluationAt().toString());
+            }
         }
 
         FirewallViolationEntity entity = new FirewallViolationEntity();
@@ -266,14 +294,27 @@ public class FirewallViolationRecorder {
 
         violations.save(entity);
         if (denied) {
-            log.warn("Firewall BLOCKED {} in {}: {} — {}",
+            log.warn("Firewall {} {} in {}: {} — {}",
+                    decision.held() ? "QUARANTINED" : "BLOCKED",
                     purl, evaluation.repositoryName(), violation.ruleType(), violation.reason());
         } else {
             log.info("Firewall {} {} in {}: {} — {} (served)",
-                    evaluation.preExisting() ? "grandfathered" : "warned about",
+                    servedBecause(evaluation, violation),
                     purl, evaluation.repositoryName(), violation.ruleType(), violation.reason());
         }
         return true;
+    }
+
+    /** Why a matched rule did not withhold the artifact, in one word, for the log. */
+    private static String servedBecause(
+            FirewallEvaluation evaluation, FirewallRuleViolation violation) {
+        if (evaluation.preExisting()) {
+            return "grandfathered";
+        }
+        if (violation.exempted()) {
+            return "exempted";
+        }
+        return "warned about";
     }
 
     /**

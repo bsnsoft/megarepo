@@ -2,6 +2,7 @@ package de.bsnsoft.megarepo.rest.controller;
 
 import de.bsnsoft.megarepo.core.exception.AccessDeniedException;
 import de.bsnsoft.megarepo.core.exception.NotFoundException;
+import de.bsnsoft.megarepo.core.firewall.FirewallApiPaths;
 import de.bsnsoft.megarepo.core.firewall.FirewallExemptionState;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
 import de.bsnsoft.megarepo.database.repository.RepositoryJpaRepository;
@@ -85,10 +86,12 @@ public class FirewallExemptionController {
     /**
      * Also the target of the link a firewall 403 carries.
      *
-     * <p>Public so {@code FirewallBlockResponse} can build that link from the
-     * constant rather than from a string that drifts.
+     * <p>Defined from {@link FirewallApiPaths#EXEMPTIONS} rather than spelled out
+     * here: {@code FirewallBlockResponse} builds that link in
+     * {@code megarepo-repository}, which cannot see this class, and the path has to
+     * be one string or the 403 eventually points somewhere that no longer exists.
      */
-    public static final String BASE_PATH = "/api/v1/firewall/exemptions";
+    public static final String BASE_PATH = FirewallApiPaths.EXEMPTIONS;
 
     /** Fixed like {@code FirewallAdminController}'s, so a continuation token stays meaningful. */
     private static final int PAGE_SIZE = 50;

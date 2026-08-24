@@ -84,15 +84,46 @@ final class RuleContexts {
 
     /** An advisory finding at the given confidence. */
     static AdvisoryFinding finding(String advisoryId, MatchConfidence confidence) {
+        return finding(advisoryId, 7.5, confidence);
+    }
+
+    /**
+     * An advisory finding with an explicit CVSS score.
+     *
+     * <p>A null score is the shape {@code KNOWN_MALICIOUS} exists for: OSV
+     * publishes {@code MAL-} entries with no score to compare against, so a
+     * threshold rule alone would serve them.
+     */
+    static AdvisoryFinding finding(String advisoryId, Double cvssScore, MatchConfidence confidence) {
         return new AdvisoryFinding(
                 advisoryId,
                 "summary",
-                "HIGH",
-                7.5,
+                cvssScore == null ? null : "HIGH",
+                cvssScore,
                 null,
                 NOW,
                 NOW,
                 List.of(new AdvisoryMatch(advisoryId, "osv", confidence, "[1.0.0,2.0.0)")));
+    }
+
+    /**
+     * One finding merged from several upstream ids — the same vulnerability
+     * published by more than one feed.
+     */
+    static AdvisoryFinding merged(Double cvssScore, MatchConfidence confidence, String... advisoryIds) {
+        List<AdvisoryMatch> matches = new java.util.ArrayList<>();
+        for (String id : advisoryIds) {
+            matches.add(new AdvisoryMatch(id, "osv", confidence, "[1.0.0,2.0.0)"));
+        }
+        return new AdvisoryFinding(
+                advisoryIds[0],
+                "summary",
+                cvssScore == null ? null : "HIGH",
+                cvssScore,
+                null,
+                NOW,
+                NOW,
+                List.copyOf(matches));
     }
 
     /**
