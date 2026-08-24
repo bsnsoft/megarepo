@@ -199,7 +199,7 @@ public class RepositoryRouter {
                 firewallAlreadyEvaluated = verdict.enforcementEvaluated();
                 if (verdict.blocked()) {
                     try (var ignored = content.content()) {} catch (Exception e) { /* close unused stream */ }
-                    writeFirewallBlockResponse(request, response, verdict, viaGroup);
+                    writeFirewallBlockResponse(request, response, verdict, viaGroup, false);
                     return;
                 }
             }
@@ -340,7 +340,7 @@ public class RepositoryRouter {
             }
             if (verdict != null && verdict.blocked()) {
                 retractRefusedUpload(storedIn, path, request);
-                writeFirewallBlockResponse(request, response, verdict, viaGroup);
+                writeFirewallBlockResponse(request, response, verdict, viaGroup, true);
                 return;
             }
         }
@@ -677,10 +677,11 @@ public class RepositoryRouter {
             HttpServletRequest request,
             HttpServletResponse response,
             FirewallEvaluation verdict,
-            String viaGroup)
+            String viaGroup,
+            boolean upload)
             throws IOException {
         FirewallBlockResponse.Context context = new FirewallBlockResponse.Context(
-                viaGroup, externalBaseUrl(request), firewallBlockProperties);
+                viaGroup, externalBaseUrl(request), firewallBlockProperties, upload);
         boolean json = FirewallBlockResponse.prefersJson(request.getHeader("Accept"));
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(FirewallBlockResponse.contentType(json));

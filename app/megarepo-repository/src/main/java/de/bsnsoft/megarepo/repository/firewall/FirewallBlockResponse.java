@@ -110,11 +110,20 @@ public final class FirewallBlockResponse {
      *     Blank simply leaves links relative, which is still usable
      * @param properties the deployment's block-body configuration
      */
-    public record Context(String viaRepository, String requestBaseUrl, FirewallBlockProperties properties) {
+    public record Context(
+            String viaRepository,
+            String requestBaseUrl,
+            FirewallBlockProperties properties,
+            boolean upload) {
 
         public Context {
             properties = properties == null ? FirewallBlockProperties.defaults() : properties;
             requestBaseUrl = requestBaseUrl == null ? "" : stripTrailingSlash(requestBaseUrl.trim());
+        }
+
+        /** A download, which is what every refusal was until uploads were gated too. */
+        public Context(String viaRepository, String requestBaseUrl, FirewallBlockProperties properties) {
+            this(viaRepository, requestBaseUrl, properties, false);
         }
 
         /** A direct download on a deployment that configured nothing. */
@@ -125,6 +134,16 @@ public final class FirewallBlockResponse {
         /** A download routed through a group, on a deployment that configured nothing. */
         public static Context via(String group) {
             return new Context(group, null, null);
+        }
+
+        /** The same, for a refused publish rather than a refused download. */
+        public Context forUpload() {
+            return new Context(viaRepository, requestBaseUrl, properties, true);
+        }
+
+        /** "download" or "publish", for prose that has to name what was refused. */
+        String direction() {
+            return upload ? "publish" : "download";
         }
 
         /** The pinned base URL when there is one, else what the request implied. */
@@ -313,9 +332,8 @@ public final class FirewallBlockResponse {
         String viaRepository = context.viaRepository();
 
         StringBuilder out = new StringBuilder();
-        out.append(decision.held()
-                ? "MegaRepo repository firewall: this download is being held.\n\n"
-                : "MegaRepo repository firewall: this download was blocked.\n\n");
+        out.append("MegaRepo repository firewall: this ").append(context.direction())
+                .append(decision.held() ? " is being held.\n\n" : " was blocked.\n\n");
         if (viaRepository != null && !viaRepository.isBlank()) {
             // The group first: it is the name the client asked for, so it is the
             // one the reader recognises. The member below it explains where the
@@ -383,6 +401,13 @@ public final class FirewallBlockResponse {
         if (decision.held()) {
             out.append("\nNothing is broken and nobody has to do anything: a held component is checked\n");
             out.append("again by itself and released as soon as the reason above no longer applies.\n");
+        } else if (context.upload()) {
+            // Saying "the artifact is untouched" here would be a lie: the router
+            // retracts what it wrote before it sends this, so the coordinates are
+            // free again and a re-publish is what the developer will try next.
+            out.append("\nNothing was published — what had been written was removed again, so these\n");
+            out.append("coordinates are still free. Publish a version that is not affected, or ask your\n");
+            out.append("MegaRepo administrator to adjust the firewall policy for this repository.\n");
         } else {
             out.append("\nThe artifact itself is untouched — only this download was refused. Use a version\n");
             out.append("that is not affected, or ask your MegaRepo administrator to adjust the firewall\n");

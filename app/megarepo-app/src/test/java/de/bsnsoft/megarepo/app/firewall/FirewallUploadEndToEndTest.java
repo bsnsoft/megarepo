@@ -287,6 +287,14 @@ class FirewallUploadEndToEndTest {
                 .contains("Policy     : ")
                 .contains("To ask for an exemption:")
                 .contains(CONTACT);
+        assertThat(refused.getBody())
+                .as("and it says publish, not download: the developer is holding a failed "
+                        + "release job, and a body telling them 'the artifact itself is "
+                        + "untouched' would be false — it was written and retracted again")
+                .contains("MegaRepo repository firewall: this publish was blocked.")
+                .contains("Nothing was published")
+                .doesNotContain("this download was blocked")
+                .doesNotContain("The artifact itself is untouched");
 
         // ── And nothing was published ────────────────────────────────────────
         assertThat(download(HOSTED, REFUSED).getStatusCode())
