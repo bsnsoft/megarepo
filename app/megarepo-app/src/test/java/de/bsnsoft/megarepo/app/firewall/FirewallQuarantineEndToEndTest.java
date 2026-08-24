@@ -614,7 +614,15 @@ class FirewallQuarantineEndToEndTest {
                 .isEqualTo(FirewallQuarantineReason.EVALUATION_INCOMPLETE);
         assertThat(entry.getState()).isEqualTo(FirewallQuarantineState.QUARANTINED);
 
-        assertPreExistingIsServed(artifact);
+        assertThat(awaitEnforcementViolationFor(artifact, FRESH).getRequestContext())
+                .as("a refusal whose reason never reached the log is the case where the "
+                        + "record matters most: 'we could not tell' has to be as auditable "
+                        + "as 'this advisory says so'")
+                .containsEntry("rule", FirewallRuleType.MIN_AGE.name())
+                .containsEntry("quarantined", true)
+                .containsEntry("quarantineReason", FirewallQuarantineReason.EVALUATION_INCOMPLETE.name());
+
+        assertPreExistingIsServedAndRecorded(artifact);
     }
 
     @Test
@@ -634,6 +642,13 @@ class FirewallQuarantineEndToEndTest {
         assertThat(quarantineRows.findAll())
                 .as("fail-open serves it, so there is nothing to come back to later")
                 .isEmpty();
+        assertThat(awaitEnforcementViolationFor(artifact, FRESH).getRequestContext())
+                .as("served is not the same as unnoticed: the operator deciding whether to "
+                        + "move this repository to fail-closed needs to see how often the "
+                        + "firewall could not tell")
+                .containsEntry("rule", FirewallRuleType.MIN_AGE.name())
+                .containsEntry("blocked", false)
+                .containsEntry("quarantined", false);
     }
 
     // ── Fixture: publishing ──────────────────────────────────────────────────
@@ -667,10 +682,9 @@ class FirewallQuarantineEndToEndTest {
      * The same, plus the audit trail a matched rule leaves behind.
      *
      * <p>Separate from {@link #assertPreExistingIsServed} because the row exists
-     * only where a rule actually matched. An evaluation that merely could not
-     * finish produces no violation row at all — there is no rule and no advisory
-     * to key one on — so a grandfathered component in that state is served
-     * silently.
+     * only where the evaluation had something to say about a rule at all — which
+     * includes a rule that could not decide, but not a component no rule ever
+     * looked at.
      */
     private void assertPreExistingIsServedAndRecorded(String artifact) {
         assertPreExistingIsServed(artifact);
