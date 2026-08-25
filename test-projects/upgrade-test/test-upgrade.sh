@@ -134,7 +134,7 @@ info "Step 3: Seeding test data"
 # -----------------------------------------------------------------------------
 
 # Get auth token
-TOKEN=$(curl -sf "http://localhost:${APP_PORT}/api/v1/auth/login" \
+TOKEN=$(curl -sf "http://localhost:${APP_PORT}/api/v1/security/auth/login" \
     -H "Content-Type: application/json" \
     -d '{"username":"admin","password":"admin123"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4) || true
 

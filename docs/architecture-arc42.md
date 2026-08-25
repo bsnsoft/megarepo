@@ -498,7 +498,7 @@ Helm chart: `app/helm/megarepo/` with support for:
 
 | Layer | Mechanism |
 |-------|-----------|
-| **Authentication** | JWT tokens (JJWT library), issued via `/api/v1/auth/login` |
+| **Authentication** | JWT tokens (JJWT library), issued via `/api/v1/security/auth/login` |
 | **Authorization** | RBAC with privileges per repository (read/write/admin). `PrivilegeEvaluator` port in core, implemented in megarepo-security. |
 | **Anonymous access** | Configurable per-instance (allow/deny read for unauthenticated users) |
 | **LDAP** | Optional external authentication source, configured via admin API |

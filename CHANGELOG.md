@@ -166,6 +166,12 @@ endpoints and rotate accordingly.
   to ~2.5 MB on the wire. (GitHub #1)
 - Admin guide: corrected the NuGet API-key login snippet to read the `token`
   field (was `accessToken`).
+- **Every documented login snippet worked against the wrong endpoint** — the
+  admin guide, the Nexus migration guide, the architecture document and the
+  upgrade test all posted to `/api/v1/auth/login` and read `.accessToken`. The
+  endpoint is `/api/v1/security/auth/login` and the response field is `token`,
+  so anyone following the guides — a migrator most of all — got a 404 on their
+  first step.
 
 ## 0.8 (2026-03-29)
 

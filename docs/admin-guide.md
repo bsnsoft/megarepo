@@ -394,9 +394,9 @@ Built-in (read-only) roles:
 
 ```bash
 # Authenticate first
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/security/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq -r '.accessToken')
+  -d '{"username":"admin","password":"admin123"}' | jq -r '.token')
 
 # Create a user
 curl -X POST http://localhost:8080/api/v1/security/users \

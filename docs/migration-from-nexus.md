@@ -46,9 +46,9 @@ MegaRepo creates 15 default repositories on first run (see the Admin Guide, Sect
 
 ```bash
 # Authenticate
-TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/security/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq -r '.accessToken')
+  -d '{"username":"admin","password":"admin123"}' | jq -r '.token')
 
 # Create a hosted repository
 curl -X POST http://megarepo:8080/api/v1/repositories \
@@ -215,9 +215,9 @@ curl -s -u admin:admin123 \
 ### 4.2 Create Users in MegaRepo
 
 ```bash
-TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://megarepo:8080/api/v1/security/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq -r '.accessToken')
+  -d '{"username":"admin","password":"admin123"}' | jq -r '.token')
 
 curl -X POST http://megarepo:8080/api/v1/security/users \
   -H "Authorization: Bearer $TOKEN" \
