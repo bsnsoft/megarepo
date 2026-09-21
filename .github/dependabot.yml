@@ -1,0 +1,39 @@
+# Dependabot — Versions- und Sicherheitsupdates für MegaRepo.
+# (Der Renovate-Bot der claude-managed-Gruppe deckt nur GitLab ab; GitHub braucht Dependabot.)
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /app
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, gradle]
+
+  - package-ecosystem: npm
+    directory: /app/megarepo-web-ui/frontend
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, npm]
+
+  - package-ecosystem: docker
+    directory: /app
+    schedule:
+      interval: weekly
+      day: saturday
+    labels: [dependencies, docker]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+    labels: [dependencies, ci]
