@@ -1,8 +1,36 @@
 # Design Proposal — Repository Firewall
 
-Status: **awaiting approval** · osTicket #155155 (TASK 1) · supersedes the NVD Firewall
+Status: **implemented** · osTicket #155155 (TASK 1) · supersedes the NVD Firewall
 
-This is the STEP 0 deliverable. No implementation has started.
+This was the STEP 0 deliverable, written 2026-07-31 before any code existed. It
+is kept because the implementation cites it by path — `V11__firewall_policies.sql`,
+`V12__firewall_advisories.sql` and `V13__firewall_violations.sql` all open with
+"Implements docs/design/repository-firewall.md section 3", and
+`FirewallExemptionState` refers back to the state list in section 3.
+
+**Read it as the design rationale, not as a description of the running system.**
+Phases 1 and 2 shipped in August 2026; where the build departed from this
+proposal, the reasons are written up in
+[firewall-phase2-waves.md § 5](firewall-phase2-waves.md) — quarantine is
+rule-driven rather than "everything the policy denied", the V8 whitelist keeps
+its own key format, `firewall_component_facts` was added, rules may answer
+`INDETERMINATE`, and `FirewallExemptionState` gained `REVOKED`.
+
+Two things in here are simply out of date:
+
+- **Section 3 (schema).** The migration numbers are all shifted: V9 and V10 were
+  taken by unrelated work before the firewall branch was cut, so the firewall
+  block runs V11–V19 and is split differently than proposed. Each migration
+  header states its own mapping back to this document.
+- **Section 4 (where the check moves to).** The evaluation hook did **not** move
+  ahead of the upstream fetch. `RepositoryRouter` evaluates the `ContentResponse`
+  before the response is written — the last point at which a refusal is still
+  possible — and the code carries the reasoning at that spot. Sections 1 and 7
+  are likewise historical: section 1 describes weaknesses that have since been
+  fixed, and all four open points in section 7 were decided (exemption, not
+  waiver).
+
+---
 
 ## 1. What the current code actually does
 
