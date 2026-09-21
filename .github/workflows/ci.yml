@@ -23,7 +23,7 @@ jobs:
       - name: Build
         working-directory: app
         run: ./gradlew build -x test -x :megarepo-integration-tests:test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: megarepo-jar
           path: app/megarepo-app/build/libs/megarepo.jar
@@ -76,7 +76,7 @@ jobs:
       # cannot open the raw log.
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports
           path: |
