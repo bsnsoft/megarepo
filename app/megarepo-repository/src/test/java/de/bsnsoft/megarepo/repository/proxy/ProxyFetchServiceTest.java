@@ -24,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -81,6 +83,13 @@ class ProxyFetchServiceTest {
 
     private static final UUID REPO_ID = UUID.randomUUID();
     private static final String REMOTE_URL = "https://repo.maven.apache.org/maven2";
+
+    /**
+     * The ProxyFetchService method a request ends up in once it has coalesced onto an in-flight
+     * fetch. Used by {@link #awaitCoalescing(Thread, Duration)} to observe that a concurrent
+     * request really is waiting rather than fetching. Rename it there, rename it here.
+     */
+    private static final String COALESCING_METHOD = "awaitAndBuildResponse";
 
     @BeforeEach
     void setUp() {
@@ -387,7 +396,9 @@ class ProxyFetchServiceTest {
             // Signal that we've entered the fetch, then block so the second thread
             // arrives at putIfAbsent while this fetch is still in progress
             fetchStarted.countDown();
-            proceedWithFetch.await(5, TimeUnit.SECONDS);
+            if (!proceedWithFetch.await(30, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Fetch gate was never released");
+            }
             return new RemoteHttpClient.RemoteResponse(
                     200, new ByteArrayInputStream(content), content.length, "application/java-archive");
         });
@@ -399,6 +410,9 @@ class ProxyFetchServiceTest {
         when(assetRepository.findByRepositoryIdAndPath(REPO_ID, path)).thenReturn(Optional.empty());
         when(assetRepository.save(any(AssetEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        AtomicReference<Thread> secondThread = new AtomicReference<>();
+        CountDownLatch secondThreadRunning = new CountDownLatch(1);
+
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             // Submit first request - it will enter the fetch and block on proceedWithFetch
@@ -406,11 +420,23 @@ class ProxyFetchServiceTest {
                     executor.submit(() -> service.fetchAndCache(repo, path, extractor));
 
             // Wait until the first request has started the remote fetch (future is in the map)
-            assertTrue(fetchStarted.await(5, TimeUnit.SECONDS), "First thread should start fetching");
+            assertTrue(fetchStarted.await(10, TimeUnit.SECONDS), "First thread should start fetching");
 
             // Submit second request - it will find the existing future via putIfAbsent
-            Future<Optional<FormatResponse>> future2 =
-                    executor.submit(() -> service.fetchAndCache(repo, path, extractor));
+            Future<Optional<FormatResponse>> future2 = executor.submit(() -> {
+                secondThread.set(Thread.currentThread());
+                secondThreadRunning.countDown();
+                return service.fetchAndCache(repo, path, extractor);
+            });
+
+            // Do NOT release the gate just because the second request has been *submitted*: the
+            // pool may not have scheduled it yet, and the first request would then finish and drop
+            // its in-flight entry before the second one ever gets to coalesce - the second request
+            // would legitimately fetch again and the count would be 2 (the CI flake). Wait until
+            // the second request is provably inside the single-flight wait instead.
+            assertTrue(secondThreadRunning.await(10, TimeUnit.SECONDS), "Second thread should start");
+            awaitCoalescing(secondThread.get(), Duration.ofSeconds(10));
+            assertEquals(1, remoteFetchCount.get(), "Only the first thread may reach the remote");
 
             // Release the fetch so both futures complete
             proceedWithFetch.countDown();
@@ -424,6 +450,32 @@ class ProxyFetchServiceTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    /**
+     * Blocks until {@code thread} has entered {@code ProxyFetchService.awaitAndBuildResponse},
+     * i.e. until it has passed {@code putIfAbsent}, found the in-flight future of the first
+     * request and started waiting on it. That frame is only reachable from the coalescing branch,
+     * so its presence proves the two requests really do overlap - which is what the "fetched
+     * exactly once" assertion is about. Without this gate the test depends on thread scheduling.
+     */
+    private static void awaitCoalescing(Thread thread, Duration timeout) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (thread.getState() == Thread.State.TERMINATED) {
+                throw new IllegalStateException("Second request finished before it could coalesce");
+            }
+            for (StackTraceElement frame : thread.getStackTrace()) {
+                if (ProxyFetchService.class.getName().equals(frame.getClassName())
+                        && COALESCING_METHOD.equals(frame.getMethodName())) {
+                    return;
+                }
+            }
+            Thread.sleep(1);
+        }
+        throw new IllegalStateException(
+                "Second request never reached ProxyFetchService." + COALESCING_METHOD
+                        + " (thread state: " + thread.getState() + ")");
     }
 
     @Test
