@@ -12,6 +12,15 @@ updates:
       gradle-minor-patch:
         update-types: [minor, patch]
     labels: [dependencies, gradle]
+    ignore:
+      # Versionen, die dem Spring-Boot-BOM folgen (siehe libs.versions.toml) —
+      # ein Major-Sprung hier bricht die Abstimmung; Wechsel nur mit Boot-Upgrade.
+      - dependency-name: "org.flywaydb:*"
+        update-types: [version-update:semver-major]
+      - dependency-name: "org.testcontainers:*"
+        update-types: [version-update:semver-major]
+      - dependency-name: "org.apache.tomcat.embed:*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /app/megarepo-web-ui/frontend
@@ -30,6 +39,10 @@ updates:
       interval: weekly
       day: saturday
     labels: [dependencies, docker]
+    ignore:
+      # Laufzeit-JRE bleibt auf der LTS, gegen die gebaut wird (Java 21).
+      - dependency-name: eclipse-temurin
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
