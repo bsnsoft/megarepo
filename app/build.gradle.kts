@@ -42,7 +42,7 @@ subprojects {
                 dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.60")
                 // Fix CVE-2025-48924 (uncontrolled recursion in ClassUtils);
                 // still required, the BOM only manages 3.17.0.
-                dependency("org.apache.commons:commons-lang3:3.20.0")
+                dependency("org.apache.commons:commons-lang3:3.21.0")
             }
         }
 
