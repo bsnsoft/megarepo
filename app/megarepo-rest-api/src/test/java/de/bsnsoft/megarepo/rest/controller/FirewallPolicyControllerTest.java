@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.core.firewall.FirewallAction;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
@@ -25,7 +26,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.time.Instant;
@@ -102,7 +102,7 @@ class FirewallPolicyControllerTest {
         when(policies.findByName(any())).thenReturn(Optional.empty());
         when(policies.findByIsDefaultTrue()).thenReturn(Optional.empty());
 
-        mockMvc = MockMvcBuilders.standaloneSetup(new FirewallPolicyController(
+        mockMvc = Jackson2MockMvc.standaloneSetup(new FirewallPolicyController(
                         policies, rules, configs, enforcementSettings, registry, quarantine))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

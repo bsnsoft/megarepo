@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.advice;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.core.exception.AccessDeniedException;
 import de.bsnsoft.megarepo.core.exception.ConflictException;
 import de.bsnsoft.megarepo.core.exception.NotFoundException;
@@ -9,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,7 +27,7 @@ class GlobalExceptionHandlerTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new ExceptionThrowingController())
+        mockMvc = Jackson2MockMvc.standaloneSetup(new ExceptionThrowingController())
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

@@ -6,7 +6,7 @@ plugins {
 dependencies {
     api(project(":megarepo-core"))
     implementation(project(":megarepo-database"))
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.spring.boot.starter.security)
     implementation(libs.spring.boot.starter.validation)
     implementation(libs.jjwt.api)

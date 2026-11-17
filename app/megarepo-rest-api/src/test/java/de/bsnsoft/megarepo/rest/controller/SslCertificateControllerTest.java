@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.bsnsoft.megarepo.core.exception.NotFoundException;
 import de.bsnsoft.megarepo.database.entity.SslCertificateEntity;
@@ -13,7 +14,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
@@ -46,7 +46,7 @@ class SslCertificateControllerTest {
     @BeforeEach
     void setUp() {
         var controller = new SslCertificateController(sslCertificateService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = Jackson2MockMvc.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

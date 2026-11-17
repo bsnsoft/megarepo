@@ -5,6 +5,8 @@ plugins {
 
 dependencies {
     api(libs.guava)
-    compileOnly(libs.spring.boot.starter.web)
+    // Jackson 2 ObjectMapper bean + jdk8/jsr310/parameter-names modules (Boot 4 defaults to Jackson 3).
+    api(libs.spring.boot.jackson2)
+    compileOnly(libs.spring.boot.starter.webmvc)
     testImplementation(libs.spring.boot.starter.test)
 }

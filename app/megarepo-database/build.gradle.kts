@@ -6,6 +6,8 @@ plugins {
 dependencies {
     api(project(":megarepo-core"))
     api(libs.spring.boot.starter.data.jpa)
+    // Boot 4 only auto-configures Flyway (migrations at startup) through its own module.
+    api(libs.spring.boot.starter.flyway)
     api(libs.flyway.core)
     api(libs.flyway.postgresql)
     runtimeOnly(libs.postgresql)

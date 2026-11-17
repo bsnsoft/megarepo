@@ -10,7 +10,7 @@ val frontendDir = project.file("frontend")
 val frontendDist = frontendDir.resolve("dist")
 val staticDir = project.file("src/main/resources/static")
 
-val npmInstall by tasks.registering(Exec::class) {
+val npmInstall = tasks.register<Exec>("npmInstall") {
     workingDir = frontendDir
     commandLine("pnpm", "install")
     inputs.file(frontendDir.resolve("package.json"))
@@ -18,7 +18,7 @@ val npmInstall by tasks.registering(Exec::class) {
     outputs.dir(frontendDir.resolve("node_modules"))
 }
 
-val frontendBuild by tasks.registering(Exec::class) {
+val frontendBuild = tasks.register<Exec>("frontendBuild") {
     dependsOn(npmInstall)
     workingDir = frontendDir
     commandLine("pnpm", "run", "build")
@@ -29,7 +29,7 @@ val frontendBuild by tasks.registering(Exec::class) {
     outputs.dir(frontendDist)
 }
 
-val copyFrontend by tasks.registering(Copy::class) {
+val copyFrontend = tasks.register<Copy>("copyFrontend") {
     dependsOn(frontendBuild)
     from(frontendDist)
     into(staticDir)

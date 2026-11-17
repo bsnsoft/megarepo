@@ -305,7 +305,7 @@ SPRING_DATASOURCE_PASSWORD=a-strong-password
 
 ## Tech Stack
 
-- Java 21 + Spring Boot 3.4
+- Java 21 + Spring Boot 4.1
 - PostgreSQL 16
 - React + Tailwind CSS (Web UI)
 - Docker / Docker Compose / Helm

@@ -42,7 +42,7 @@ for Maven, PyPI, npm, Docker, and raw formats. Commercial license at $200/month 
 | Constraint | Rationale |
 |------------|-----------|
 | Java 21 with preview features | Records, sealed interfaces, pattern matching |
-| Spring Boot 3.4.x | Ecosystem maturity, auto-configuration for modules |
+| Spring Boot 4.1.x | Ecosystem maturity, auto-configuration for modules |
 | PostgreSQL 16 | JSONB support, full-text search, no embedded DB needed |
 | React + Tailwind CSS v4 | Admin SPA bundled into the Spring Boot jar |
 | Gradle with Kotlin DSL | Multi-module build with version catalog |

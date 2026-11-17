@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.repository.firewall.report.AdvisoryStoreState;
 import de.bsnsoft.megarepo.repository.firewall.report.ComparisonReportRequest;
 import de.bsnsoft.megarepo.repository.firewall.report.ComparisonSummary;
@@ -14,7 +15,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.time.Duration;
@@ -41,7 +41,7 @@ class FirewallComparisonReportControllerTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(
+        mockMvc = Jackson2MockMvc.standaloneSetup(
                         new FirewallComparisonReportController(comparisonService))
                 .build();
     }

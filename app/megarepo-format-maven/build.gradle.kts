@@ -9,7 +9,7 @@ dependencies {
     implementation(project(":megarepo-storage"))
     implementation(project(":megarepo-database"))
     implementation(libs.packageurl.java)
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.commons.codec)
     implementation(libs.jackson.dataformat.xml)
     testImplementation(libs.spring.boot.starter.test)

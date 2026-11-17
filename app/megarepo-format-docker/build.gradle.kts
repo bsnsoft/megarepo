@@ -11,7 +11,7 @@ dependencies {
     implementation(libs.packageurl.java)
     implementation(project(":megarepo-security"))
     implementation(project(":megarepo-tasks"))
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.spring.boot.starter.security)
     implementation(libs.commons.codec)
     testImplementation(libs.spring.boot.starter.test)

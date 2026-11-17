@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.spotless) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.spring.dependency.management) apply false
-    id("org.owasp.dependencycheck") version "12.2.2"
+    id("org.owasp.dependencycheck") version "13.0.0"
 }
 
 dependencyCheck {
@@ -34,15 +34,15 @@ subprojects {
                 mavenBom(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
             }
             dependencies {
-                // Override Tomcat to fix CVE-2026-34483, CVE-2026-34486, CVE-2026-34487, CVE-2026-34500
-                // NOTE: an explicit version here WINS over the Spring Boot BOM, so this must never
-                // fall behind the BOM's tomcat.version (3.5.16 manages 10.1.55).
-                dependency("org.apache.tomcat.embed:tomcat-embed-core:10.1.60")
-                dependency("org.apache.tomcat.embed:tomcat-embed-el:10.1.60")
-                dependency("org.apache.tomcat.embed:tomcat-embed-websocket:10.1.60")
                 // Fix CVE-2025-48924 (uncontrolled recursion in ClassUtils);
-                // still required, the BOM only manages 3.17.0.
-                dependency("org.apache.commons:commons-lang3:3.20.0")
+                // kept explicit and newer than the BOM (spring-boot 4.1.2 manages 3.20.0).
+                // NOTE: an explicit version here WINS over the Spring Boot BOM, so it must
+                // never fall behind the BOM's commons-lang3.version.
+                dependency("org.apache.commons:commons-lang3:3.22.0")
+                // Ahead of the BOM (spring-boot 4.1.2 manages 1.21.0). Without this, the
+                // app module would resolve the BOM version even though the modules that
+                // declare commons-codec ask for the newer one.
+                dependency("commons-codec:commons-codec:1.23.0")
             }
         }
 

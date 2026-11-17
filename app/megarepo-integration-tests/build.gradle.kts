@@ -20,6 +20,8 @@ dependencies {
     testImplementation(project(":megarepo-database"))
     testImplementation(project(":megarepo-core"))
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.spring.boot.starter.webmvc.test)
+    testImplementation(libs.spring.boot.restclient)
     testImplementation(libs.spring.security.test)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)

@@ -11,7 +11,7 @@ dependencies {
     implementation(project(":megarepo-search"))
     implementation(project(":megarepo-storage"))
     implementation(project(":megarepo-tasks"))
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.spring.boot.starter.security)
     implementation(libs.spring.boot.starter.validation)
     implementation(libs.springdoc.openapi.starter)

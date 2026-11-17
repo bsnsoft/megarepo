@@ -2,9 +2,9 @@ package de.bsnsoft.megarepo.repository.advisory;
 
 import de.bsnsoft.megarepo.database.config.JpaConfig;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
@@ -127,7 +127,7 @@ public abstract class AdvisoryDatabaseTest {
         DataSourceAutoConfiguration.class,
         DataSourceTransactionManagerAutoConfiguration.class,
         HibernateJpaAutoConfiguration.class,
-        org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration.class
+        org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration.class
     })
     static class TestConfig {}
 }

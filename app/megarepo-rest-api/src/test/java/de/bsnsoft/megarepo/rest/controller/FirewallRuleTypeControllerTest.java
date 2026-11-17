@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
@@ -15,7 +16,6 @@ import de.bsnsoft.megarepo.security.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.util.EnumSet;
@@ -46,7 +46,7 @@ class FirewallRuleTypeControllerTest {
             EnumSet.complementOf(EnumSet.of(FirewallRuleType.ADVISORY_MATCH));
 
     private MockMvc mockMvc(FirewallRule... rules) {
-        return MockMvcBuilders.standaloneSetup(
+        return Jackson2MockMvc.standaloneSetup(
                         new FirewallRuleTypeController(new FirewallRuleRegistry(List.of(rules))))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

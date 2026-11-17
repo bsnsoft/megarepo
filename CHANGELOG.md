@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Security
+- **Dependency and platform update for open advisories (November 2026)** —
+  Spring Boot 3.5.16 → 4.1.2 (Spring Framework 7.0.10, Spring Security 7.1.2,
+  Tomcat 11.0.27, Hibernate 7.4, Flyway 12.4, Testcontainers 2.0.5, springdoc 3.2.0),
+  which closes the critical Spring MVC advisories CVE-2026-47884 and CVE-2026-47890
+  that have no fix on the 6.2 line. Jackson 2.21.7, Netty 4.2.19, HttpClient 5.6.5 /
+  HttpCore 5.4.4, Log4j API 2.25.5, Guava 33.8.0 and pgjdbc 42.7.14 come with it.
+  The Web UI moves to React 19, react-router 7.18, Vite 8, Vitest 5 and
+  TypeScript 7, clearing the open react-router, Vite, Vitest/tinypool, undici,
+  postcss, nanoid and browserslist advisories. Gradle 9.9.1. JSON on the REST API
+  is still written by Jackson 2 with the same settings as before
+  (`spring.http.converters.preferred-json-mapper: jackson2`); moving to Jackson 3
+  is a separate step.
+
 ### Features
 - **Repository firewall, phase 1: identity, sources and audit mode** — components
   are identified by package URL (purl) instead of a CPE product name guessed from
