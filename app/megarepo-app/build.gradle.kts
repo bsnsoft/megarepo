@@ -22,7 +22,7 @@ dependencies {
     runtimeOnly(project(":megarepo-format-raw"))
     runtimeOnly(project(":megarepo-format-docker"))
 
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.springdoc.openapi.starter)
@@ -30,6 +30,8 @@ dependencies {
     runtimeOnly(libs.postgresql)
 
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.spring.boot.starter.webmvc.test)
+    testImplementation(libs.spring.boot.restclient)
     // For AppAdminAuthorizationTest, which drives the real SecurityConfig filter
     // chain against the controllers this module contributes to /api/v1/admin/**
     // and /api/v1/system/license. Those endpoints cannot be asserted from

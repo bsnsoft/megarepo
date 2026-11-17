@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.bsnsoft.megarepo.core.firewall.FirewallComponentKeyKind;
 import de.bsnsoft.megarepo.core.firewall.FirewallExemptionScope;
@@ -22,7 +23,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -66,7 +66,7 @@ class FirewallExemptionControllerTest {
 
     private void withController(ExemptionProperties properties) {
         var controller = new FirewallExemptionController(exemptions, properties, repositories);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = Jackson2MockMvc.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

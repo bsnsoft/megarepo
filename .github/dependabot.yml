@@ -12,15 +12,9 @@ updates:
       gradle-minor-patch:
         update-types: [minor, patch]
     labels: [dependencies, gradle]
-    ignore:
-      # Versionen, die dem Spring-Boot-BOM folgen (siehe libs.versions.toml) —
-      # ein Major-Sprung hier bricht die Abstimmung; Wechsel nur mit Boot-Upgrade.
-      - dependency-name: "org.flywaydb:*"
-        update-types: [version-update:semver-major]
-      - dependency-name: "org.testcontainers:*"
-        update-types: [version-update:semver-major]
-      - dependency-name: "org.apache.tomcat.embed:*"
-        update-types: [version-update:semver-major]
+    # Die Major-Sperren für Flyway/Testcontainers/Tomcat sind mit dem Upgrade auf
+    # Spring Boot 4 entfallen. Majors kommen weiter als Einzel-PR (die Gruppe oben
+    # nimmt nur minor/patch) und werden vor dem Merge gegen das Boot-BOM geprüft.
 
   - package-ecosystem: npm
     directory: /app/megarepo-web-ui/frontend

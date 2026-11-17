@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.bsnsoft.megarepo.core.format.FormatRegistry;
 import de.bsnsoft.megarepo.database.entity.RepositoryEntity;
@@ -15,7 +16,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
@@ -64,7 +64,7 @@ class RepositoryControllerTest {
     @BeforeEach
     void setUp() {
         var controller = new RepositoryController(repositoryJpaRepository, blobStoreJpaRepository, groupMemberJpaRepository, componentJpaRepository, assetJpaRepository, formatRegistry);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = Jackson2MockMvc.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

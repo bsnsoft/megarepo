@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineReason;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineResolution;
 import de.bsnsoft.megarepo.core.firewall.FirewallQuarantineState;
@@ -24,7 +25,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.time.Instant;
@@ -78,7 +78,7 @@ class FirewallQuarantineControllerTest {
         policies = mock(FirewallPolicyJpaRepository.class);
         when(policies.findAllById(any())).thenReturn(List.of());
 
-        mockMvc = MockMvcBuilders.standaloneSetup(new FirewallQuarantineController(
+        mockMvc = Jackson2MockMvc.standaloneSetup(new FirewallQuarantineController(
                         quarantine, entries, new QuarantineMapper(), policies))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

@@ -23,7 +23,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -73,6 +74,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * than no link. What must survive both is the part a build log is read for: which
  * component, from which repository, refused by which rule, over which advisory.
  */
+@AutoConfigureTestRestTemplate
 @SpringBootTest(
         classes = MegaRepoApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)

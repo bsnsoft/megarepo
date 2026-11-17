@@ -69,7 +69,7 @@ class AuthChallengeIntegrationTest extends BaseIntegrationTest {
                 baseUrl() + "/api/v1/repositories", String.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
-        assertFalse(response.getHeaders().containsKey(HttpHeaders.WWW_AUTHENTICATE),
+        assertFalse(response.getHeaders().containsHeader(HttpHeaders.WWW_AUTHENTICATE),
                 "UI API 401 must not carry WWW-Authenticate (would trigger the browser's Basic-Auth popup)");
         assertNotNull(response.getHeaders().getContentType());
         assertTrue(response.getHeaders().getContentType().isCompatibleWith(MediaType.APPLICATION_JSON),
@@ -89,7 +89,7 @@ class AuthChallengeIntegrationTest extends BaseIntegrationTest {
                 String.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
-        assertFalse(response.getHeaders().containsKey(HttpHeaders.WWW_AUTHENTICATE),
+        assertFalse(response.getHeaders().containsHeader(HttpHeaders.WWW_AUTHENTICATE),
                 "Expired-session 401 must not carry WWW-Authenticate");
     }
 
@@ -105,7 +105,7 @@ class AuthChallengeIntegrationTest extends BaseIntegrationTest {
                 String.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
-        assertFalse(response.getHeaders().containsKey(HttpHeaders.WWW_AUTHENTICATE),
+        assertFalse(response.getHeaders().containsHeader(HttpHeaders.WWW_AUTHENTICATE),
                 "AJAX-marked requests must not get a Basic challenge, even on repository paths");
     }
 

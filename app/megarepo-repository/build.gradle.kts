@@ -11,7 +11,7 @@ dependencies {
     // PurlMapper/PurlBuilder/ComponentIdentity, which the format modules
     // implement, so it is part of this module's API surface.
     api(libs.packageurl.java)
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.spring.boot.starter.security)
     // ComparableVersion for the firewall's Maven version scheme. The class is
     // self-contained, so the plexus-utils transitive is excluded to keep the

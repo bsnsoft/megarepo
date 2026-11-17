@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.database.entity.AuditLogEntity;
 import de.bsnsoft.megarepo.repository.AuditService;
 import de.bsnsoft.megarepo.rest.advice.GlobalExceptionHandler;
@@ -11,7 +12,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
@@ -39,7 +39,7 @@ class AuditControllerTest {
     @BeforeEach
     void setUp() {
         var controller = new AuditController(auditService, new com.fasterxml.jackson.databind.ObjectMapper());
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = Jackson2MockMvc.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

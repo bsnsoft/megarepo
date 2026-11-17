@@ -5,7 +5,7 @@ plugins {
 
 dependencies {
     api(project(":megarepo-core"))
-    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.webmvc)
     implementation(libs.commons.codec)
     implementation(platform(libs.aws.sdk.bom))
     implementation(libs.aws.sdk.s3)

@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.database.entity.BlobStoreEntity;
 import de.bsnsoft.megarepo.database.repository.BlobStoreJpaRepository;
 import de.bsnsoft.megarepo.rest.advice.GlobalExceptionHandler;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
@@ -41,7 +41,7 @@ class BlobStoreControllerTest {
     @BeforeEach
     void setUp() {
         var controller = new BlobStoreController(blobStoreJpaRepository, assetJpaRepository, blobStoreManager);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = Jackson2MockMvc.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

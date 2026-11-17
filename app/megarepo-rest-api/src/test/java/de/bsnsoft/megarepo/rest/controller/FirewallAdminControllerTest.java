@@ -1,5 +1,6 @@
 package de.bsnsoft.megarepo.rest.controller;
 
+import de.bsnsoft.megarepo.rest.Jackson2MockMvc;
 import de.bsnsoft.megarepo.core.firewall.FirewallAction;
 import de.bsnsoft.megarepo.core.firewall.FirewallFailMode;
 import de.bsnsoft.megarepo.core.firewall.FirewallMode;
@@ -32,7 +33,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.time.Instant;
@@ -95,7 +95,7 @@ class FirewallAdminControllerTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new FirewallAdminController(
+        mockMvc = Jackson2MockMvc.standaloneSetup(new FirewallAdminController(
                         enforcementSettings,
                         enforcementRepo,
                         configRepo,

@@ -13,7 +13,8 @@ import de.bsnsoft.megarepo.database.repository.UserJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.ActiveProfiles;
@@ -54,6 +55,7 @@ import java.util.UUID;
  * user — is left alone, because {@code DefaultRepositoryFormatsIntegrationTest} asserts
  * against it and it is only ever created on a first run.
  */
+@AutoConfigureTestRestTemplate
 @SpringBootTest(
         classes = MegaRepoApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
