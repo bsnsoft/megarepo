@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Security
+- **Mitigation for CVE-2026-114938 ("Java2Shell")** — the Docker image now
+  starts the JVM with `-XX:-UseBASE64Intrinsics`. The flaw is a heap overflow in
+  the JIT-compiled `java.util.Base64` decoder on x86-64 CPUs with AVX-512 VBMI
+  (Intel Ice Lake and newer, AMD Zen 4 and newer); MegaRepo decodes untrusted
+  Base64 before authentication (HTTP Basic). ARM64 hosts are not affected. If you
+  run the jar outside the image, add the same flag until your JDK has the fix
+  (OpenJDK 21.0.13.1 / 17.0.21.1 / 25.0.5.1 or newer).
 - **Dependency and platform update for open advisories (November 2026)** —
   Spring Boot 3.5.16 → 4.1.2 (Spring Framework 7.0.10, Spring Security 7.1.2,
   Tomcat 11.0.27, Hibernate 7.4, Flyway 12.4, Testcontainers 2.0.5, springdoc 3.2.0),

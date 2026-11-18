@@ -128,7 +128,7 @@ Requirements: Java 21+, PostgreSQL 16+.
 
 3. Run:
    ```bash
-   java --enable-preview -jar megarepo-app.jar \
+   java --enable-preview -XX:-UseBASE64Intrinsics -jar megarepo-app.jar \
      --spring.datasource.url=jdbc:postgresql://localhost:5432/megarepo?stringtype=unspecified \
      --spring.datasource.username=megarepo \
      --spring.datasource.password=<password> \

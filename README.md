@@ -286,8 +286,9 @@ This starts MegaRepo and PostgreSQL 16. Data is persisted in Docker volumes (`me
 # Build the JAR
 ./gradlew :megarepo-app:bootJar
 
-# Run (PostgreSQL must be available)
-java -jar megarepo-app/build/libs/megarepo.jar \
+# Run (PostgreSQL must be available). -XX:-UseBASE64Intrinsics mitigates
+# CVE-2026-114938 until your JDK has the fix (see CHANGELOG).
+java -XX:-UseBASE64Intrinsics -jar megarepo-app/build/libs/megarepo.jar \
   --spring.datasource.url=jdbc:postgresql://db-host:5432/megarepo \
   --megarepo.security.jwt.secret=your-secret-here
 ```
